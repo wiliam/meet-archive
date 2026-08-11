@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}{{ m.title }} — Summit Archive{% endblock %}
+{% block content %}
+<article class="meeting">
+  <p class="crumbs"><a href="/">← ко всем встречам</a></p>
+
+  <header class="meeting-head">
+    <h1>{{ m.title }}</h1>
+    <div class="meeting-meta">
+      <span class="mono">{{ m.created_date|fmt_date }}</span>
+      {% if m.recording_duration %}<span class="mono">{{ m.recording_duration|fmt_duration }}</span>{% endif %}
+      {% if m.folder_name %}
+      <span class="chip"><span class="dot" style="--dot: {{ m.folder_color or '#8a7f6d' }}"></span>{{ m.folder_name }}</span>
+      {% endif %}
+      {% for t in tags %}
+      <a class="chip" href="/?tag={{ t.id }}"><span class="dot" style="--dot: {{ t.color or '#8a7f6d' }}"></span>{{ t.name }}</a>
+      {% endfor %}
+    </div>
+    <div class="meeting-actions">
+      <a class="btn" href="/meetings/{{ m.id }}/export.md">↓ Экспорт транскрипта (.md)</a>
+      {% if 'document.md' in files_on_disk %}
+      <a class="btn ghost" href="/meetings/{{ m.id }}/files/document.md">document.md из архива</a>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if speakers %}
+  <section class="panel">
+    <h2 class="side-label">Участники</h2>
+    <ul class="people">
+      {% for s in speakers %}
+      <li>
+        <span class="person-name">{{ s.name }}</span>
+        {% if s.position or s.company %}
+        <span class="dim">{{ [s.position, s.company]|select|join(', ') }}</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if m.notes %}
+  <section class="panel">
+    <h2 class="side-label">Заметки</h2>
+    <p class="prewrap">{{ m.notes }}</p>
+  </section>
+  {% endif %}
+
+  {% if topics %}
+  <section class="panel">
+    <h2 class="side-label">Темы</h2>
+    <ul class="topics">
+      {% for t in topics %}<li>{{ t.content }}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if action_items %}
+  <section class="panel">
+    <h2 class="side-label">Action items</h2>
+    <ul class="actions-list">
+      {% for a in action_items %}
+      <li class="{{ 'done' if a.completed }}">
+        <span class="checkbox">{{ '✓' if a.completed else '○' }}</span>
+        {{ a.content }}{% if a.assignee %} <span class="dim">— {{ a.assignee }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% set audio = files_on_disk|select('in', ['microphone.m4a', 'system.m4a'])|list %}
+  {% if audio %}
+  <section class="panel" id="audio-panel">
+    <h2 class="side-label">Аудио</h2>
+    {% if audio|length == 2 %}
+    <div class="sync-player" id="sync-player">
+      <button class="btn" id="sync-toggle" type="button">▶ Обе дорожки</button>
+      <input type="range" id="sync-seek" value="0" min="0" max="100" step="0.1">
+      <span class="mono" id="sync-time">00:00</span>
+    </div>
+    {% endif %}
+    {% for f in audio %}
+    <div class="audio-row">
+      <span class="mono dim">{{ 'микрофон' if f == 'microphone.m4a' else 'системный звук' }}</span>
+      <audio controls preload="metadata" data-track src="/meetings/{{ m.id }}/files/{{ f }}"></audio>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if other_attachments %}
+  <section class="panel">
+    <h2 class="side-label">Вложения</h2>
+    <ul class="topics">
+      {% for a in other_attachments %}
+      <li><a href="/meetings/{{ m.id }}/attachments/{{ a.file_name }}">{{ a.file_name }}</a>
+        <span class="mono dim">{{ (a.file_size / 1024)|round|int }} КБ</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if timeline %}
+  <section class="transcript">
+    <h2 class="side-label">Транскрипт</h2>
+    {% for item in timeline %}
+    {% if item.kind == 'shot' %}
+    <figure class="shot">
+      <a href="/meetings/{{ m.id }}/attachments/{{ item.file_name }}" target="_blank">
+        <img loading="lazy" src="/meetings/{{ m.id }}/attachments/{{ item.file_name }}" alt="{{ item.file_name }}">
+      </a>
+      <figcaption class="mono dim">скриншот · {{ item.start_time|fmt_ts }}</figcaption>
+    </figure>
+    {% else %}
+    <div class="utterance {{ 'sys' if item.source == 'systemAudio' }}">
+      <div class="utterance-head">
+        <span class="speaker">{{ item.speaker }}</span>
+        <span class="mono ts">{{ item.start_time|fmt_ts }}</span>
+      </div>
+      <p>{{ item.texts|join(' ') }}</p>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </section>
+  {% elif not m.has_transcription %}
+  <p class="empty">У этой встречи нет транскрипта.</p>
+  {% endif %}
+
+  {% if audio|length == 2 %}
+  <script>
+  (function () {
+    const tracks = [...document.querySelectorAll("audio[data-track]")];
+    const [master, slave] = tracks;
+    const toggle = document.getElementById("sync-toggle");
+    const seek = document.getElementById("sync-seek");
+    const timeEl = document.getElementById("sync-time");
+    let syncing = false;
+
+    const fmt = (s) => {
+      s = Math.floor(s || 0);
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      const mm = String(m).padStart(2, "0"), ss = String(sec).padStart(2, "0");
+      return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+    };
+
+    master.addEventListener("loadedmetadata", () => { seek.max = master.duration; });
+
+    toggle.addEventListener("click", () => {
+      if (master.paused) {
+        syncing = true;
+        slave.currentTime = master.currentTime;
+        Promise.allSettled([master.play(), slave.play()]);
+        toggle.textContent = "⏸ Пауза";
+      } else {
+        master.pause(); slave.pause();
+        toggle.textContent = "▶ Обе дорожки";
+      }
+    });
+
+    // пауза любой дорожки её нативными контролами останавливает синхрон
+    tracks.forEach((t) => t.addEventListener("pause", () => {
+      if (syncing && master.paused !== slave.paused) {
+        master.pause(); slave.pause();
+      }
+      if (master.paused) { syncing = false; toggle.textContent = "▶ Обе дорожки"; }
+    }));
+
+    master.addEventListener("timeupdate", () => {
+      seek.value = master.currentTime;
+      timeEl.textContent = fmt(master.currentTime);
+      if (syncing && Math.abs(slave.currentTime - master.currentTime) > 0.3) {
+        slave.currentTime = master.currentTime;
+      }
+    });
+
+    seek.addEventListener("input", () => {
+      master.currentTime = +seek.value;
+      slave.currentTime = +seek.value;
+    });
+  })();
+  </script>
+  {% endif %}
+</article>
+{% endblock %}

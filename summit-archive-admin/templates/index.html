@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<aside class="sidebar">
+  <nav class="side-group">
+    <h2 class="side-label">Папки</h2>
+    <a href="/" class="side-link {{ 'active' if not active_folder and not active_tag and not q }}">
+      Все встречи
+    </a>
+    {% for f in folders %}
+    <a href="/?folder={{ f.id }}" class="side-link {{ 'active' if active_folder == f.id }}">
+      <span class="dot" style="--dot: {{ f.color or '#8a7f6d' }}"></span>
+      {{ f.name }}
+      <span class="count">{{ f.meeting_count }}</span>
+    </a>
+    {% endfor %}
+  </nav>
+  {% if tags %}
+  <nav class="side-group">
+    <h2 class="side-label">Теги</h2>
+    {% for t in tags %}
+    <a href="/?tag={{ t.id }}" class="side-link {{ 'active' if active_tag == t.id }}">
+      <span class="dot" style="--dot: {{ t.color or '#8a7f6d' }}"></span>
+      {{ t.name }}
+      <span class="count">{{ t.meeting_count }}</span>
+    </a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+</aside>
+
+<section class="content">
+  <div class="content-head">
+    <h1>
+      {% if q %}Поиск: «{{ q }}»{% elif active_folder %}Папка{% elif active_tag %}Тег{% else %}Все встречи{% endif %}
+    </h1>
+    <span class="result-count">{{ meetings|length }} встреч{% if q or active_folder or active_tag %} · <a href="/">сбросить</a>{% endif %}</span>
+  </div>
+
+  {% if not meetings %}
+  <p class="empty">Ничего не найдено.</p>
+  {% endif %}
+
+  <ul class="cards">
+    {% for m in meetings %}
+    <li class="card">
+      <div class="card-date">
+        <span class="mono">{{ m.created_date|fmt_date }}</span>
+        {% if m.recording_duration %}<span class="mono dim">{{ m.recording_duration|fmt_duration }}</span>{% endif %}
+      </div>
+      <div class="card-body">
+        <a class="card-title" href="/meetings/{{ m.id }}">{{ m.title }}</a>
+        <div class="card-meta">
+          {% if m.folder_name %}
+          <span class="chip"><span class="dot" style="--dot: {{ m.folder_color or '#8a7f6d' }}"></span>{{ m.folder_name }}</span>
+          {% endif %}
+          {% if m.tag_names %}<span class="chip">{{ m.tag_names }}</span>{% endif %}
+          {% if m.speaker_count %}<span class="chip">{{ m.speaker_count }} уч.</span>{% endif %}
+          {% if m.word_count %}<span class="chip dim">{{ m.word_count }} слов</span>{% endif %}
+        </div>
+        {% if hits.get(m.id) and hits[m.id].snippet %}
+        <p class="snippet">{{ hits[m.id].snippet|highlight }}</p>
+        {% endif %}
+      </div>
+      <a class="card-export mono" href="/meetings/{{ m.id }}/export.md" title="Скачать транскрипт .md">↓ md</a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

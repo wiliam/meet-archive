@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Синхронизация — Summit Archive{% endblock %}
+{% block content %}
+<article class="meeting">
+  <p class="crumbs"><a href="/">← ко всем встречам</a></p>
+  <header class="meeting-head">
+    <h1>Синхронизация с Summit</h1>
+    <div class="meeting-meta">
+      <span class="mono dim">{{ source_root }}</span>
+      {% if state.last_successful_sync_at %}
+      <span class="chip">последний синк: {{ state.last_successful_sync_at|fmt_date }}</span>
+      {% endif %}
+      {% if state.last_sync_mode %}
+      <span class="chip dim">{{ state.last_sync_mode }}{% if state.last_prune_keep_active %}, keep {{ state.last_prune_keep_active }}{% endif %}</span>
+      {% endif %}
+    </div>
+  </header>
+
+  {% if delta.error %}
+  <section class="panel"><p class="empty">{{ delta.error }}</p></section>
+  {% else %}
+
+  <section class="panel">
+    <h2 class="side-label">Состояние</h2>
+    <p>
+      В живой базе <strong>{{ delta.active_count }}</strong> активных встреч,
+      в архиве <strong>{{ delta.archive_count }}</strong>.
+      {% if not delta.to_sync and not delta.to_prune %}
+      <strong style="color: var(--accent)">Синхронизация не требуется.</strong>
+      {% endif %}
+    </p>
+  </section>
+
+  {% if delta.to_sync %}
+  <section class="panel">
+    <h2 class="side-label">Будет синхронизировано в архив — {{ delta.to_sync|length }}</h2>
+    <ul class="topics">
+      {% for d in delta.to_sync %}
+      <li>{{ d.title }} <span class="mono dim">{{ d.created_date|fmt_date }} · {{ d.status }}</span></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if delta.overflow %}
+  <section class="panel">
+    <h2 class="side-label">Будет удалено из живой базы (prune, keep {{ keep_active }}) — {{ delta.to_prune|length }}</h2>
+    <ul class="topics">
+      {% for d in delta.to_prune %}
+      <li>{{ d.title }} <span class="mono dim">{{ d.created_date|fmt_date }}</span></li>
+      {% endfor %}
+    </ul>
+    {% if delta.unsafe %}
+    <p class="empty">⚠ {{ delta.unsafe|length }} старых встреч ещё нет в архиве — скрипт откажется их удалять, сначала выполните sync.</p>
+    {% endif %}
+    <p class="dim" style="font-size: 0.82rem">Перед удалением скрипт сам создаёт бэкап живой базы.</p>
+  </section>
+  {% endif %}
+
+  <section class="panel">
+    <h2 class="side-label">Запуск</h2>
+    <form class="sync-form" action="/sync/run" method="post"
+          onsubmit="return this.dry_run.checked || confirm('Запустить синхронизацию по-настоящему? Prune удалит старые встречи из живой базы (с бэкапом).')">
+      <label>Режим
+        <select name="mode">
+          <option value="sync-and-prune" selected>sync-and-prune (по умолчанию)</option>
+          <option value="sync">sync — только копировать в архив</option>
+          <option value="prune">prune — только удалить старые из живой</option>
+        </select>
+      </label>
+      <label>Оставить активных (keep-active)
+        <input type="number" name="keep_active" value="{{ keep_active }}" min="1" max="999">
+      </label>
+      <label class="check"><input type="checkbox" name="dry_run" value="true"> dry-run (показать план, ничего не менять)</label>
+      <button class="btn" type="submit">Запустить</button>
+    </form>
+  </section>
+
+  {% endif %}
+
+  {% if result %}
+  <section class="panel">
+    <h2 class="side-label">Результат {{ '✓' if result.ok else '✗ ошибка' }}</h2>
+    {% if result.cmd %}<p class="mono dim" style="font-size: 0.78rem">{{ result.cmd }}</p>{% endif %}
+    <pre class="script-output">{{ result.output }}</pre>
+    {% if result.ok %}<p><a href="/sync">Обновить дельту</a></p>{% endif %}
+  </section>
+  {% endif %}
+</article>
+{% endblock %}
