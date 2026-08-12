@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Архив пуст — Summit Archive{% endblock %}
+{% block content %}
+<section class="empty-state">
+  <h1>Архив пока пуст</h1>
+  <p>
+    Папка архива создана, но встречи в неё ещё не перенесены — поэтому показывать нечего.
+  </p>
+  <p>Запустите синхронизацию в терминале, из корня репозитория:</p>
+  <pre><code>./summit_archive.sh dry-run   <span class="muted"># посмотреть, что поедет</span>
+./summit_archive.sh sync      <span class="muted"># перенести встречи в архив</span></code></pre>
+  <p>Затем обновите эту страницу.</p>
+  <p class="muted">Архив: <code>{{ archive_root }}</code></p>
+</section>
+{% endblock %}

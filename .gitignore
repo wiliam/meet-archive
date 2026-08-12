@@ -14,6 +14,9 @@
 archive-index.md
 archive-state.json
 
+# Состояние запущенного сервера: pid и логи
+.run/
+
 # Медиа из встреч
 *.m4a
 *.mp3

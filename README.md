@@ -39,9 +39,17 @@ Then archive your meetings:
 And browse them:
 
 ```bash
-summit-archive-admin/.venv/bin/uvicorn app:app --port 8377 --app-dir summit-archive-admin
-# → http://127.0.0.1:8377
+./serve.sh open      # starts the server if needed, then opens the browser
 ```
+
+Prefer an icon over a command? Install a launcher and open the archive with a double click:
+
+```bash
+./install-app.sh     # creates ~/Applications/Meet Archive.app
+```
+
+`--agent` additionally keeps the server running from login, `--uninstall` removes both.
+Other commands: `./serve.sh status | stop | logs`. The server binds to `127.0.0.1` only.
 
 To also trim the live store to the 12 most recent meetings:
 
@@ -69,6 +77,8 @@ meet-archive/
 - [`docs/summit-app-notes.md`](docs/summit-app-notes.md) — app internals, DB schema,
   `document.md` format, troubleshooting
 - [`docs/admin-design.md`](docs/admin-design.md) — design of the web admin
+- [`docs/why-a-launcher-not-a-desktop-app.md`](docs/why-a-launcher-not-a-desktop-app.md) — why
+  this stays a local server instead of becoming a Tauri or native app
 - [`CLAUDE.md`](CLAUDE.md) — orientation for coding agents; start here if you asked an agent to
   set this up for you
 

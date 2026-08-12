@@ -228,3 +228,9 @@ a.chip:hover { background: var(--rule); text-decoration: none; }
   text-align: center; color: var(--ink-faint); font-size: 0.75rem;
   padding: 1.2rem; border-top: 1px solid var(--rule); margin-top: 2rem;
 }
+
+/* Пустой архив: первый запуск до первого sync */
+.empty-state { max-width: 46rem; margin: 3rem auto; }
+.empty-state h1 { margin-bottom: .5rem; }
+.empty-state pre { padding: 1rem; border-radius: .5rem; overflow-x: auto; }
+.empty-state .muted { opacity: .65; }

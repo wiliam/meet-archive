@@ -8,6 +8,7 @@
 
 import os
 import secrets
+import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
@@ -68,6 +69,21 @@ def get_conn():
         yield conn
     finally:
         conn.close()
+
+
+@app.exception_handler(FileNotFoundError)
+@app.exception_handler(sqlite3.OperationalError)
+def archive_not_ready(request: Request, exc: Exception):
+    """Первый запуск: архива ещё нет или он пуст.
+
+    Без этого свежая установка встречает пользователя трейсбеком: setup.sh
+    создаёт папку архива, но схема появляется только после первого sync.
+    """
+    if isinstance(exc, sqlite3.OperationalError) and "no such table" not in str(exc):
+        raise exc
+    return templates.TemplateResponse(
+        request, "empty.html", {"archive_root": db.archive_root()}, status_code=503
+    )
 
 
 @app.get("/")

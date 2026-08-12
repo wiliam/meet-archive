@@ -64,6 +64,30 @@ anything.
 If meeting folders contain audio but no `document.md`, the app's markdown export is off —
 see `docs/summit-app-notes.md`.
 
+## Running the admin
+
+`serve.sh` is the only place that knows how to start the server — the `.app` launcher and the
+optional LaunchAgent both call it. Don't invoke `uvicorn` directly and don't add a second way in.
+
+```bash
+./serve.sh open      # start if needed, then open the browser (idempotent; the common case)
+./serve.sh status | stop | restart | logs
+./serve.sh run       # foreground — for launchd only, which needs a process that stays alive
+./install-app.sh     # generate ~/Applications/Meet Archive.app; --agent, --uninstall
+```
+
+Two constraints to preserve:
+
+- **Bind to `127.0.0.1` only.** The archive holds real meetings, and Basic Auth is off unless both
+  `ADMIN_USER` and `ADMIN_PASSWORD` are set (`summit-archive-admin/app.py`).
+- **The `.app` executable must be a compiled binary, not a shell script.** With a script, macOS
+  runs `/bin/bash`, TCC attributes the process to `/bin/bash`, and access to a repo under
+  `~/Documents` is denied silently with no permission prompt. `install-app.sh` compiles a small C
+  launcher for exactly this reason — see `docs/why-a-launcher-not-a-desktop-app.md`.
+
+`serve.sh status` reports "running" when the port answers even without a pid file: the server may
+have been started by the LaunchAgent rather than by `start`.
+
 ## Safety rules for `prune`
 
 Pruning deletes meetings from the **live** Summit database. The script is careful, and any change
@@ -106,3 +130,5 @@ change coupled the code to a specific machine.
 - `docs/archive-workflow.md` — what gets archived, all CLI modes, the safety model
 - `docs/summit-app-notes.md` — host app internals, DB schema, `document.md` format, troubleshooting
 - `docs/admin-design.md` — design decisions behind the web admin
+- `docs/why-a-launcher-not-a-desktop-app.md` — why this stays a local server, and the two macOS
+  traps (`.app` executables and TCC) that shaped the launcher
