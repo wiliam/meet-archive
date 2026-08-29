@@ -37,21 +37,49 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ## Тесты
 
 ```bash
-.venv/bin/pip install pytest
+.venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest tests/ -q
 ```
 
 ## Хостинг
 
-Приложение stateless: достаточно любого хоста с Python (VPS, Fly.io, Railway…).
+Развёрнутый экземпляр работает как **хаб**: несколько Mac присылают в него свои
+встречи по HTTP, он сводит их в одну базу и даёт общий поиск. Полное описание —
+`../docs/multi-device.md`.
 
-1. Скопируйте папку `summit-archive/` (база + папки встреч) на сервер
-   и укажите путь в `SUMMIT_ARCHIVE_ROOT`.
-2. Обязательно задайте `ADMIN_USER`/`ADMIN_PASSWORD` — в архиве личные встречи.
-3. Запуск: `uvicorn app:app --host 0.0.0.0 --port 8000` за reverse-proxy с HTTPS.
-4. Обновление архива = повторная загрузка свежего `database.sqlite`
-   (например, `rsync -av summit-archive/ server:/srv/summit-archive/`
-   после очередного запуска `summit_archive.sh`).
+Коротко:
 
-WAL-файлы (`-wal`, `-shm`) копировать вместе с базой либо предварительно
-схлопнуть: `sqlite3 database.sqlite "PRAGMA wal_checkpoint(TRUNCATE);"`.
+```bash
+# на устройстве: сгенерировать схему серверной базы (только DDL, без данных)
+./scripts/dump-schema.sh summit-archive/database.sqlite > summit-archive-admin/schema.sql
+
+# на VPS: том под данные, владелец обязан совпасть с UID контейнера
+mkdir -p /opt/meet-archive/{data,backups} && chown -R 10001:10001 /opt/meet-archive
+
+# приложение создаётся в Dokploy из репозитория, переменные — по .env.example
+
+# с устройства
+export MEET_ARCHIVE_HUB_URL=https://<домен> MEET_ARCHIVE_HUB_TOKEN=<токен>
+./summit_archive.sh push --dry-run
+./summit_archive.sh push
+```
+
+Что важно знать до развёртывания:
+
+- В роли `server` приложение **не поднимется** без `ADMIN_USER`, `ADMIN_PASSWORD`
+  и `INGEST_TOKENS`. В архиве личные встречи, и молчаливый режим без пароля на
+  публичном домене недопустим.
+- Страница `/sync` в серверной роли не регистрируется: живой базы Summit там нет.
+- Аудио на сервер не едет — только строки БД и `document.md`. На карточке встречи
+  показывается, на каком устройстве осталась запись.
+- Базу нельзя обновлять копированием файла поверх работающего сервера: данные
+  приходят через ingest, а не через rsync.
+
+## Конфигурация серверной роли
+
+| Переменная | Назначение |
+|---|---|
+| `MEET_ARCHIVE_ROLE` | `server` включает хаб; по умолчанию `local` |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | Basic Auth, обязательны в роли `server` |
+| `INGEST_TOKENS` | токены устройств: `device-id:секрет` через запятую |
+| `INGEST_MAX_BYTES` | предел размера бандла (по умолчанию 32 МиБ) |

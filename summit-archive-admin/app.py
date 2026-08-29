@@ -6,9 +6,11 @@
   ADMIN_USER / ADMIN_PASSWORD  включают HTTP Basic Auth (для хостинга)
 """
 
+import json
 import os
 import secrets
 import sqlite3
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
@@ -18,7 +20,10 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+import bootstrap
+import config
 import db
+import ingest_api
 import sync as sync_mod
 from export import build_markdown, export_filename, fmt_date, fmt_duration, fmt_ts
 
@@ -28,10 +33,26 @@ MEETING_FILES = {"document.md", "microphone.m4a", "system.m4a"}
 security = HTTPBasic(auto_error=False)
 
 
-def require_auth(credentials: HTTPBasicCredentials | None = Depends(security)):
+def require_auth(
+    request: Request, credentials: HTTPBasicCredentials | None = Depends(security)
+):
+    # Зависимость висит на всём приложении, включая ingest. У тех маршрутов своя
+    # авторизация по bearer-токену, и без этого выхода запрос с заголовком
+    # Bearer получал бы 401 просто потому, что он не Basic.
+    if request.url.path.startswith("/api/"):
+        return
+
     user = os.environ.get("ADMIN_USER")
     password = os.environ.get("ADMIN_PASSWORD")
     if not user or not password:
+        if config.is_server():
+            # На публичном домене отсутствие учёток — не «режим без пароля»,
+            # а поломка конфигурации. check_startup обычно не даёт сюда дойти;
+            # это второй замок на самой опасной строке в проекте.
+            raise HTTPException(
+                status_code=401,
+                headers={"WWW-Authenticate": "Basic realm=summit-archive"},
+            )
         return  # auth выключен (локальный режим)
     ok = (
         credentials is not None
@@ -44,8 +65,25 @@ def require_auth(credentials: HTTPBasicCredentials | None = Depends(security)):
         )
 
 
-app = FastAPI(title="Summit Archive", dependencies=[Depends(require_auth)])
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Проверка на старте, а не на импорте: тесты должны иметь возможность
+    # импортировать приложение, не выставляя окружение сервера.
+    config.check_startup()
+    if config.is_server():
+        bootstrap.ensure_schema(db.db_path())
+    yield
+
+
+app = FastAPI(
+    title="Summit Archive",
+    dependencies=[Depends(require_auth)],
+    lifespan=lifespan,
+)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+
+if config.ingest_enabled():
+    app.include_router(ingest_api.router)
 
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.filters["fmt_date"] = fmt_date
@@ -61,6 +99,8 @@ def highlight(snippet: str):
 
 
 templates.env.filters["highlight"] = highlight
+templates.env.globals["show_sync"] = not config.is_server()
+templates.env.globals["is_server"] = config.is_server()
 
 
 def get_conn():
@@ -123,6 +163,25 @@ def _load_meeting(conn, doc_id: str):
     return meeting
 
 
+def _meeting_origin(conn, doc_id: str) -> dict | None:
+    """С какого устройства встреча и осталась ли там запись.
+
+    На локальном архиве таблиц хаба нет, meeting_origin вернёт None, и шаблон
+    просто ничего не покажет — локальный режим не меняется.
+    """
+    row = db.meeting_origin(conn, doc_id)
+    if row is None:
+        return None
+    try:
+        audio = json.loads(row["audio_files"] or "[]")
+    except ValueError:
+        audio = []
+    return {
+        "device": row["label"] or row["device_id"],
+        "audio_files": audio,
+    }
+
+
 @app.get("/meetings/{doc_id}")
 def meeting_page(request: Request, doc_id: str, conn=Depends(get_conn)):
     meeting = _load_meeting(conn, doc_id)
@@ -145,6 +204,7 @@ def meeting_page(request: Request, doc_id: str, conn=Depends(get_conn)):
         "meeting.html",
         {
             "m": meeting,
+            "origin": _meeting_origin(conn, doc_id),
             "speakers": db.meeting_speakers(conn, doc_id),
             "tags": db.meeting_tags(conn, doc_id),
             "topics": db.meeting_topics(conn, doc_id),
@@ -196,20 +256,24 @@ def _default_keep() -> int:
     return int(sync_mod.load_state().get("last_prune_keep_active") or 10)
 
 
-@app.get("/sync")
-def sync_page(request: Request, keep: int | None = None):
-    return _render_sync(request, keep or _default_keep())
+# Только локально. На сервере живой базы Summit нет, страница бесполезна, а
+# POST /sync/run запускает архиватор подпроцессом без CSRF-токена — на публичном
+# домене это лишняя поверхность, которой лучше просто не существовать.
+if not config.is_server():
 
+    @app.get("/sync")
+    def sync_page(request: Request, keep: int | None = None):
+        return _render_sync(request, keep or _default_keep())
 
-@app.post("/sync/run")
-def sync_run(
-    request: Request,
-    mode: str = Form("sync-and-prune"),
-    keep_active: int = Form(10),
-    dry_run: bool = Form(False),
-):
-    result = sync_mod.run_script(mode, keep_active, dry_run)
-    return _render_sync(request, keep_active, result)
+    @app.post("/sync/run")
+    def sync_run(
+        request: Request,
+        mode: str = Form("sync-and-prune"),
+        keep_active: int = Form(10),
+        dry_run: bool = Form(False),
+    ):
+        result = sync_mod.run_script(mode, keep_active, dry_run)
+        return _render_sync(request, keep_active, result)
 
 
 @app.get("/meetings/{doc_id}/files/{name}")

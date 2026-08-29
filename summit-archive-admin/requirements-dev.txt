@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8.0
+# httpx нужен fastapi.testclient.TestClient — без него HTTP-уровень не тестируется
+httpx>=0.27

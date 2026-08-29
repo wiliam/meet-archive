@@ -8,6 +8,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_ROOT="${SUMMIT_SOURCE_ROOT:-$REPO_ROOT/summit}"
 ARCHIVE_ROOT="${SUMMIT_ARCHIVE_ROOT:-$REPO_ROOT/summit-archive}"
 SCRIPT_PATH="$REPO_ROOT/archive_summit_meetings.py"
+PUSH_SCRIPT="$REPO_ROOT/push_to_hub.py"
 
 # --archive-root передаётся явно всегда. Полагаться на его вычисление внутри
 # скрипта нельзя: там source-root проходит через Path.resolve(), и если
@@ -21,17 +22,32 @@ Usage:
   summit_archive.sh dry-run
   summit_archive.sh prune KEEP_ACTIVE
   summit_archive.sh sync-and-prune KEEP_ACTIVE
+  summit_archive.sh push [--dry-run ...]
+  summit_archive.sh sync-and-push [--dry-run ...]
 
 Examples:
   summit_archive.sh
   summit_archive.sh dry-run
   summit_archive.sh prune 20
   summit_archive.sh sync-and-prune 20
+  summit_archive.sh push --dry-run
+  summit_archive.sh sync-and-push
 
 Environment:
-  SUMMIT_SOURCE_ROOT    живая папка Summit   (default: <repo>/summit)
-  SUMMIT_ARCHIVE_ROOT   папка архива         (default: <repo>/summit-archive)
+  SUMMIT_SOURCE_ROOT      живая папка Summit   (default: <repo>/summit)
+  SUMMIT_ARCHIVE_ROOT     папка архива         (default: <repo>/summit-archive)
+  MEET_ARCHIVE_HUB_URL    адрес хаба, куда отправлять встречи
+  MEET_ARCHIVE_HUB_TOKEN  токен устройства (или push --token-file ПУТЬ)
 EOF
+}
+
+# Вариант без exec. Нужен там, где после архивации идёт ещё один шаг: exec
+# подменяет процесс, и вторая половина составного режима не выполнилась бы.
+run_nonexec() {
+  python3 "$SCRIPT_PATH" \
+    --source-root "$SOURCE_ROOT" \
+    --archive-root "$ARCHIVE_ROOT" \
+    "$@"
 }
 
 run() {
@@ -39,6 +55,10 @@ run() {
     --source-root "$SOURCE_ROOT" \
     --archive-root "$ARCHIVE_ROOT" \
     "$@"
+}
+
+push() {
+  python3 "$PUSH_SCRIPT" --archive-root "$ARCHIVE_ROOT" "$@"
 }
 
 mode="${1:-sync}"
@@ -63,6 +83,15 @@ case "$mode" in
       exit 1
     fi
     run --mode sync-and-prune --keep-active "$2"
+    ;;
+  push)
+    shift || true
+    push "$@"
+    ;;
+  sync-and-push)
+    shift || true
+    run_nonexec --mode sync
+    push "$@"
     ;;
   -h|--help|help)
     usage

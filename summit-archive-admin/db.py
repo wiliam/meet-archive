@@ -25,6 +25,9 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     # в разных потоках пула; сам sqlite3 собран в serialized-режиме, это безопасно
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # На хабе базу параллельно пишет ingest. Без ожидания читающий запрос,
+    # попавший на момент слияния, падал бы с "database is locked".
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 
@@ -246,3 +249,21 @@ def group_transcript(segments) -> list[dict]:
                 }
             )
     return blocks
+
+
+def meeting_origin(conn: sqlite3.Connection, doc_id: str) -> sqlite3.Row | None:
+    """С какого устройства пришла встреча и есть ли там запись.
+
+    Возвращает None на локальном архиве, где таблиц хаба просто нет, — благодаря
+    этому остальные запросы и локальный режим остаются нетронутыми.
+    """
+    try:
+        return conn.execute(
+            """SELECT i.device_id, i.audio_files, d.label
+               FROM ingest_documents i
+               LEFT JOIN ingest_devices d ON d.device_id = i.device_id
+               WHERE i.document_id = ?""",
+            (doc_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None

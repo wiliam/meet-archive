@@ -15,7 +15,9 @@
       <span class="brand-mark">⌘</span>
       <span class="brand-name">Summit Archive</span>
     </a>
+    {% if show_sync %}
     <nav class="top-nav"><a href="/sync">Синхронизация</a></nav>
+    {% endif %}
     <form class="search" action="/" method="get">
       <input type="search" name="q" value="{{ q|default('') }}"
              placeholder="Поиск по транскриптам, темам, названиям…" autocomplete="off">

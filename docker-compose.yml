@@ -1,0 +1,41 @@
+# Разворачивается через Dokploy из этого репозитория.
+#
+# Домен, TLS и переменные окружения задаются в интерфейсе Dokploy — в репозитории
+# секретов нет. Имена переменных перечислены в .env.example.
+#
+# Имена сети и entrypoints взяты из живой конфигурации сервера, а не из умолчаний
+# Dokploy: Traefik здесь развёрнут отдельно (репозиторий hostinger), слушает
+# entrypoints http/https и подключён к внешней сети proxy.
+
+services:
+  admin:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Консолидированная база и папки встреч с document.md.
+      # На хосте: mkdir -p /opt/meet-archive/data && chown -R 10001:10001 /opt/meet-archive
+      - /opt/meet-archive/data:/data
+    networks:
+      - proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy
+      # http -> https
+      - traefik.http.routers.meet-archive.rule=Host(`${MEET_ARCHIVE_DOMAIN}`)
+      - traefik.http.routers.meet-archive.entrypoints=http
+      - traefik.http.routers.meet-archive.middlewares=meet-archive-https
+      - traefik.http.middlewares.meet-archive-https.redirectscheme.scheme=https
+      # https
+      - traefik.http.routers.meet-archive-secure.rule=Host(`${MEET_ARCHIVE_DOMAIN}`)
+      - traefik.http.routers.meet-archive-secure.entrypoints=https
+      - traefik.http.routers.meet-archive-secure.tls=true
+      - traefik.http.routers.meet-archive-secure.tls.certresolver=letsencrypt
+      - traefik.http.routers.meet-archive-secure.middlewares=security-headers@file
+      - traefik.http.services.meet-archive.loadbalancer.server.port=8000
+
+networks:
+  proxy:
+    external: true

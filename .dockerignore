@@ -1,0 +1,21 @@
+# Без этого файла в слой образа уезжает 66-мегабайтная база и все записи встреч.
+summit/
+summit-archive/
+*.sqlite
+*.sqlite-*
+*.bak-*
+*.m4a
+*.mp3
+*.wav
+
+.git/
+.run/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+.env
+.env.*

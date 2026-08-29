@@ -88,6 +88,14 @@
     </div>
     {% endfor %}
   </section>
+  {% elif origin and origin.audio_files %}
+  <section class="panel" id="audio-panel">
+    <h2 class="side-label">Запись</h2>
+    <p class="dim">
+      Аудио осталось на устройстве <strong>{{ origin.device }}</strong> —
+      на сервер едут только транскрипт и метаданные.
+    </p>
+  </section>
   {% endif %}
 
   {% if other_attachments %}
