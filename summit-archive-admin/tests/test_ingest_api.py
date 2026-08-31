@@ -119,6 +119,22 @@ def test_sync_routes_present_in_local_role(make_client):
     assert client.get("/sync").status_code != 404
 
 
+def test_push_route_absent_in_server_role(make_client):
+    """Кнопка отправки — локальная: на хабе отправлять некуда и нечем."""
+    client, _ = make_client()
+    assert client.post("/sync/push", auth=ADMIN, data={}).status_code == 404
+
+
+def test_push_route_present_in_local_role(make_client):
+    client, _ = make_client(role="local")
+    assert client.post("/sync/push", data={}).status_code != 404
+
+
+def test_hub_state_route_follows_the_same_role_rule(make_client):
+    assert make_client()[0].get("/sync/hub.json", auth=ADMIN).status_code == 404
+    assert make_client(role="local")[0].get("/sync/hub.json").status_code != 404
+
+
 def test_health_needs_no_auth(make_client):
     client, _ = make_client()
     response = client.get("/api/ingest/health")

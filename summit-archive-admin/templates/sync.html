@@ -78,6 +78,47 @@
 
   {% endif %}
 
+  {# Панель хаба — вне блока delta.error: она не зависит от живой базы Summit
+     и должна работать на машине, где Summit не установлен. #}
+  <section class="panel">
+    <h2 class="side-label">
+      Хаб
+      {% if hub.configured %}<span class="mono dim">{{ hub.url }}</span>{% endif %}
+    </h2>
+
+    {% if not hub.configured %}
+    <p class="empty">
+      Не настроен. Ожидается <span class="mono">{{ hub.config_file }}</span>
+      с <span class="mono">MEET_ARCHIVE_HUB_URL</span> (или
+      <span class="mono">MEET_ARCHIVE_DOMAIN</span>) и
+      <span class="mono">INGEST_TOKENS</span>, либо те же переменные в окружении.
+    </p>
+    {% else %}
+    {# Наполняется запросом ниже: ответ хаба занимает 3-9 секунд, и ждать его
+       при отрисовке страницы значило бы вешать /sync на всё это время. #}
+    <div id="hub-state"><p class="dim">Спрашиваю хаб…</p></div>
+    {% endif %}
+
+    {% if hub.configured %}
+    <form class="sync-form" action="/sync/push" method="post">
+      <label class="check"><input type="checkbox" name="dry_run" value="true"> dry-run (показать план, ничего не отправлять)</label>
+      <button class="btn" type="submit">Отправить на хаб</button>
+    </form>
+    <p class="dim" style="font-size: 0.82rem">
+      Аудио не отправляется — только строки базы и document.md. Хаб только
+      накапливает: локальный prune ничего там не удалит.
+    </p>
+    {% endif %}
+  </section>
+
+  {% if hub_result %}
+  <section class="panel">
+    <h2 class="side-label">Отправка на хаб {{ '✓' if hub_result.ok else '✗ ошибка' }}</h2>
+    {% if hub_result.cmd %}<p class="mono dim" style="font-size: 0.78rem">{{ hub_result.cmd }}</p>{% endif %}
+    <pre class="script-output">{{ hub_result.output }}</pre>
+  </section>
+  {% endif %}
+
   {% if result %}
   <section class="panel">
     <h2 class="side-label">Результат {{ '✓' if result.ok else '✗ ошибка' }}</h2>
@@ -87,4 +128,49 @@
   </section>
   {% endif %}
 </article>
+
+{% if hub.configured %}
+<script>
+  // Состояние хаба тянем после отрисовки: ответ идёт 3-9 секунд, почти всё —
+  // TLS через океан. Сама страница от этого не зависит и открывается сразу.
+  (function () {
+    var box = document.getElementById("hub-state");
+    if (!box) return;
+
+    function esc(s) {
+      var d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    }
+
+    fetch("/sync/hub.json")
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d.error) {
+          box.innerHTML = '<p class="empty">⚠ ' + esc(d.error) + "</p>";
+          return;
+        }
+        var html =
+          "<p>В архиве <strong>" + esc(d.archive_count) +
+          "</strong>, на хабе <strong>" + esc(d.hub_count) + "</strong>. ";
+        if (!d.to_push.length) {
+          html += '<strong style="color: var(--accent)">Хаб в актуальном состоянии.</strong>';
+        }
+        html += "</p>";
+        if (d.to_push.length) {
+          html += '<p class="dim">К отправке — ' + d.to_push.length + ":</p><ul class=\"topics\">";
+          d.to_push.forEach(function (m) {
+            html += "<li>" + esc(m.title) +
+              ' <span class="mono dim">' + esc(m.status) + "</span></li>";
+          });
+          html += "</ul>";
+        }
+        box.innerHTML = html;
+      })
+      .catch(function (e) {
+        box.innerHTML = '<p class="empty">⚠ Не удалось спросить хаб: ' + esc(e.message) + "</p>";
+      });
+  })();
+</script>
+{% endif %}
 {% endblock %}

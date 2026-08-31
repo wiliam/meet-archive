@@ -14,7 +14,10 @@ from pathlib import Path
 
 import db
 
-_run_lock = threading.Lock()
+# Публичный: этой же блокировкой пользуется hub.run_push. Отправка на хаб
+# читает архив в режиме mode=ro без busy_timeout, поэтому идти параллельно
+# с пишущим архиватором она не должна — иначе «database is locked».
+RUN_LOCK = threading.Lock()
 
 
 def source_root() -> Path:
@@ -141,7 +144,7 @@ def run_script(mode: str, keep_active: int | None, dry_run: bool) -> dict:
     if dry_run:
         cmd.append("--dry-run")
 
-    if not _run_lock.acquire(blocking=False):
+    if not RUN_LOCK.acquire(blocking=False):
         return {"ok": False, "output": "Синхронизация уже запущена, подождите."}
     try:
         proc = subprocess.run(
@@ -156,4 +159,4 @@ def run_script(mode: str, keep_active: int | None, dry_run: bool) -> dict:
     except subprocess.TimeoutExpired:
         return {"ok": False, "output": "Скрипт не завершился за 15 минут — прерван."}
     finally:
-        _run_lock.release()
+        RUN_LOCK.release()

@@ -279,7 +279,14 @@ def select_documents(conn, state: dict, *, limit=None, only=None) -> list[str]:
 
 def _read_token(args) -> str:
     if args.token_file:
-        return Path(args.token_file).expanduser().read_text(encoding="utf-8").strip()
+        path = Path(args.token_file).expanduser()
+        try:
+            token = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConfigError(f"Не читается файл токена {path}: {exc.strerror}") from exc
+        if not token:
+            raise ConfigError(f"Файл токена пуст: {path}")
+        return token
     token = os.environ.get("MEET_ARCHIVE_HUB_TOKEN", "").strip()
     if not token:
         raise ConfigError(

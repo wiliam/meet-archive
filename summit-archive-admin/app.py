@@ -23,6 +23,7 @@ from fastapi.templating import Jinja2Templates
 import bootstrap
 import config
 import db
+import hub as hub_mod
 import ingest_api
 import sync as sync_mod
 from export import build_markdown, export_filename, fmt_date, fmt_duration, fmt_ts
@@ -237,17 +238,26 @@ def export_md(doc_id: str, conn=Depends(get_conn)):
     )
 
 
-def _render_sync(request, keep_active: int, result: dict | None = None):
-    delta = sync_mod.compute_delta(keep_active)
+def _render_sync(
+    request,
+    keep_active: int,
+    result: dict | None = None,
+    hub_result: dict | None = None,
+):
     return templates.TemplateResponse(
         request,
         "sync.html",
         {
-            "delta": delta,
+            "delta": sync_mod.compute_delta(keep_active),
             "state": sync_mod.load_state(),
             "keep_active": keep_active,
             "result": result,
             "source_root": str(sync_mod.source_root()),
+            # Только локальная конфигурация: состояние хаба страница подтягивает
+            # отдельным запросом. Замер показал 3-9 секунд на ответ хаба, и
+            # синхронный вызов заставлял бы /sync висеть всё это время.
+            "hub": hub_mod.hub_config(),
+            "hub_result": hub_result,
         },
     )
 
@@ -274,6 +284,17 @@ if not config.is_server():
     ):
         result = sync_mod.run_script(mode, keep_active, dry_run)
         return _render_sync(request, keep_active, result)
+
+    @app.get("/sync/hub.json")
+    def sync_hub_state():
+        """Состояние хаба для панели. Отдельный запрос — см. _render_sync."""
+        return hub_mod.compute_delta()
+
+    @app.post("/sync/push")
+    def sync_push(request: Request, dry_run: bool = Form(False)):
+        return _render_sync(
+            request, _default_keep(), hub_result=hub_mod.run_push(dry_run)
+        )
 
 
 @app.get("/meetings/{doc_id}/files/{name}")
