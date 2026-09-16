@@ -30,20 +30,26 @@ meet-archive/
 ├── setup.sh
 ├── summit-archive-admin/
 ├── docs/
-├── summit/           ← live Summit storage (symlink or real dir). NOT in git.
+├── summit/           ← live meeting folders (symlink or real dir). NOT in git.
+├── summit-db/        ← optional live DB directory for split layouts. NOT in git.
 └── summit-archive/   ← the archive. NOT in git.
 ```
 
 Two independent conventions meet here, which is why the layout is load-bearing:
 
-- `archive_summit_meetings.py` derives the archive path as *sibling of source, named
+- `archive_summit_meetings.py` defaults the live DB to `<source-root>/database.sqlite` for
+  backward compatibility; `--source-db` supports newer split Summit layouts.
+- It derives the archive path as *sibling of source, named
   `<source>-archive`* when `--archive-root` is omitted.
 - `summit-archive-admin/db.py` defaults `SUMMIT_ARCHIVE_ROOT` to `../summit-archive`, and
-  `sync.py` defaults `SUMMIT_SOURCE_ROOT` to `<archive-root>/../summit`.
+  `sync.py` defaults `SUMMIT_SOURCE_ROOT` to `<archive-root>/../summit`. It prefers the legacy
+  `<source-root>/database.sqlite` when present, then tries
+  `<archive-root>/../summit-db/database.sqlite`.
 
-Keep `summit/` and `summit-archive/` as siblings of `summit-archive-admin/` and everything works
-with zero configuration. To use different locations, set **both** `SUMMIT_SOURCE_ROOT` and
-`SUMMIT_ARCHIVE_ROOT` — the shell wrapper and the web admin read the same two variables.
+Keep `summit/`, optional `summit-db/`, and `summit-archive/` as siblings of
+`summit-archive-admin/` and everything works with zero configuration. To use different locations,
+set `SUMMIT_SOURCE_ROOT`, optional `SUMMIT_SOURCE_DB`, and `SUMMIT_ARCHIVE_ROOT` — the shell
+wrapper and the web admin read the same variables.
 
 ## Trap: symlinks and `--archive-root`
 
@@ -57,12 +63,13 @@ both already do this. Preserve that if you modify them.
 ## Setup
 
 ```bash
-./setup.sh            # or: ./setup.sh --source /path/to/Summit/storage
+./setup.sh
+# or: ./setup.sh --source /path/to/meeting/folders --source-db /path/to/database.sqlite
 ```
 
-It checks prerequisites, links `summit/`, creates `summit-archive/`, installs the admin's
-dependencies into `summit-archive-admin/.venv`, and finishes with a dry run. It never deletes
-anything.
+It checks prerequisites, detects legacy or split Summit storage, links `summit/` and optional
+`summit-db/`, creates `summit-archive/`, installs the admin's dependencies into
+`summit-archive-admin/.venv`, and finishes with a dry run. It never deletes anything.
 
 If meeting folders contain audio but no `document.md`, the app's markdown export is off —
 see `docs/summit-app-notes.md`.
@@ -146,8 +153,9 @@ Never run a prune unattended on someone's behalf without that confirmation step.
 
 ## Privacy
 
-`summit/` and `summit-archive/` contain real meeting recordings, transcripts and names. They are
-gitignored — along with `*.sqlite*`, `*.m4a`, `archive-index.md` and `archive-state.json`. If you
+`summit/`, `summit-db/`, and `summit-archive/` contain or link to real meeting recordings,
+transcripts and names. They are gitignored — along with `*.sqlite*`, `*.m4a`, `archive-index.md`
+and `archive-state.json`. If you
 add files here, check `git status` before committing, and never paste transcript content into
 commit messages, issues, or anything that leaves the machine.
 

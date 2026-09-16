@@ -15,7 +15,7 @@ and optionally trims the live store so the app stays fast. Nothing leaves your m
   (SQLite FTS5), filters by folder and tag, meeting cards with speakers, topics, action items,
   audio players, and markdown export.
 - **Setup script** — links your live storage, creates the archive, installs dependencies,
-  finishes with a dry run.
+  detects both legacy and split Summit storage layouts, and finishes with a dry run.
 
 ## Requirements
 
@@ -66,8 +66,17 @@ The clone is the working root. Your data lives inside it and is gitignored:
 
 ```
 meet-archive/
-├── summit/           → live Summit storage (symlink created by setup.sh)
+├── summit/           → live meeting folders (symlink created by setup.sh)
+├── summit-db/        → live database directory (new split layout; optional)
 └── summit-archive/   → your archive: database + meeting folders
+```
+
+Older Summit versions keep `database.sqlite` inside `summit/`; that layout remains supported.
+Newer versions keep the database in the app container and audio in a user-selected directory,
+so `setup.sh` links both directories separately. Explicit paths are also supported:
+
+```bash
+./setup.sh --source /path/to/meeting/folders --source-db /path/to/database.sqlite
 ```
 
 ## Docs
@@ -84,8 +93,8 @@ meet-archive/
 
 ## Privacy
 
-The archive contains your meeting recordings and transcripts. `summit/` and `summit-archive/` are
-gitignored, as are `*.sqlite*` and `*.m4a` anywhere in the tree. If you host the web admin
+The archive contains your meeting recordings and transcripts. `summit/`, `summit-db/` and
+`summit-archive/` are gitignored, as are `*.sqlite*` and `*.m4a` anywhere in the tree. If you host the web admin
 anywhere other than localhost, set `ADMIN_USER` and `ADMIN_PASSWORD` — without both, there is no
 authentication.
 

@@ -7,14 +7,17 @@ Summit storage without breaking the app UI or leaving orphan rows.
 ## Layout
 Everything is resolved relative to the repository root (`<repo>` below):
 
-- Active storage: `<repo>/summit` — the live Summit storage directory (a real folder or a symlink
-  to the app container)
+- Meeting files: `<repo>/summit` — one live directory per meeting (a real folder or symlink)
+- Active DB: `<repo>/summit/database.sqlite` in the legacy layout, or
+  `<repo>/summit-db/database.sqlite` in the newer split layout
 - Archive storage: `<repo>/summit-archive`
 - Archive DB: `<repo>/summit-archive/database.sqlite`
 - Archive index: `<repo>/summit-archive/archive-index.md`
 
-Both paths can be overridden with `SUMMIT_SOURCE_ROOT` / `SUMMIT_ARCHIVE_ROOT` — the same
-environment variables the web admin reads.
+The paths can be overridden with `SUMMIT_SOURCE_ROOT`, `SUMMIT_SOURCE_DB`, and
+`SUMMIT_ARCHIVE_ROOT` — the same environment variables the web admin reads. If
+`SUMMIT_SOURCE_DB` is unset, the legacy `<source-root>/database.sqlite` is preferred when present;
+otherwise the split-layout `summit-db/database.sqlite` path is used.
 
 ## What gets archived
 For each meeting, the script copies:
@@ -95,13 +98,14 @@ Useful for options the wrapper does not expose, such as syncing one explicit mee
 ```bash
 python3 archive_summit_meetings.py \
   --source-root  "$PWD/summit" \
+  --source-db    "$PWD/summit-db/database.sqlite" \
   --archive-root "$PWD/summit-archive" \
   --mode sync \
   --document-id 00000000-0000-0000-0000-000000000000
 ```
 
 Full option list: `python3 archive_summit_meetings.py --help`
-(`--mode`, `--keep-active`, `--document-id`, `--dry-run`, `--skip-backup`).
+(`--source-db`, `--mode`, `--keep-active`, `--document-id`, `--dry-run`, `--skip-backup`).
 
 > **Always pass `--archive-root` explicitly.** Left unset, the script derives it from
 > `--source-root` *after* `Path.resolve()`. If `summit/` is a symlink into the app container,

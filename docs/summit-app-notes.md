@@ -6,16 +6,20 @@ an agent needs to adjust the app itself during setup.
 
 ## Storage paths
 
-- Default storage: `~/Library/Containers/app.summitnotes/Data/Documents/Summit`
+- Legacy combined storage: `~/Library/Containers/app.summitnotes/Data/Documents/Summit`
+- Current database: `~/Library/Containers/app.summitnotes/Data/Library/Application Support/Summit/Database/database.sqlite`
 - Preferences plist: `~/Library/Containers/app.summitnotes/Data/Library/Preferences/app.summitnotes.plist`
 - Bundle id: `app.summitnotes`; deep links look like `https://summitnotes.app/open/document/<UUID>`
 
-This kit expects the storage directory to be reachable as `<repo>/summit`, either because the app
-was pointed at it or via a symlink created by `setup.sh`.
+Current Summit builds can store meeting folders in the user-selected `audioStorageBookmarkPath`
+while keeping the SQLite database in the app container. `setup.sh` represents that split layout
+as `<repo>/summit` for meeting folders and `<repo>/summit-db` for the database directory. Older
+combined storage remains supported without `summit-db`.
 
 ## Files in storage
 
-- `database.sqlite` (+ `database.sqlite-wal`, `database.sqlite-shm`) — the main DB.
+- `database.sqlite` (+ `database.sqlite-wal`, `database.sqlite-shm`) — the main DB; these files
+  must stay together in one directory.
 - One folder per meeting, named with the meeting UUID, containing:
   - `microphone.m4a`
   - `system.m4a`

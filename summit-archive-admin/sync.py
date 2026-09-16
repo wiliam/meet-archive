@@ -25,6 +25,19 @@ def source_root() -> Path:
     return Path(os.environ.get("SUMMIT_SOURCE_ROOT", default))
 
 
+def source_db() -> Path:
+    configured = os.environ.get("SUMMIT_SOURCE_DB")
+    if configured:
+        return Path(configured)
+    legacy_layout = source_root() / "database.sqlite"
+    if legacy_layout.exists():
+        return legacy_layout
+    split_layout = db.archive_root().parent / "summit-db" / "database.sqlite"
+    if split_layout.exists():
+        return split_layout
+    return legacy_layout
+
+
 def script_path() -> Path:
     """Скрипт переноса лежит в корне репозитория, рядом с summit-archive-admin.
 
@@ -52,7 +65,7 @@ def _connect_ro(path: Path) -> sqlite3.Connection:
 
 def compute_delta(keep_active: int) -> dict:
     """Повторяет селекторы скрипта переноса (read-only) для предпросмотра."""
-    src_db = source_root() / "database.sqlite"
+    src_db = source_db()
     if not src_db.exists():
         return {"error": f"Живая база не найдена: {src_db}"}
 
@@ -134,6 +147,8 @@ def run_script(mode: str, keep_active: int | None, dry_run: bool) -> dict:
         str(script_path()),
         "--source-root",
         str(source_root()),
+        "--source-db",
+        str(source_db()),
         "--archive-root",
         str(db.archive_root()),
         "--mode",

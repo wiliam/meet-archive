@@ -506,6 +506,11 @@ def select_documents_for_prune(src: sqlite3.Connection, archive_conn: sqlite3.Co
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sync Summit meetings into an archive DB, then optionally prune old active meetings.")
     parser.add_argument("--source-root", default=".", help="Path to active Summit storage directory")
+    parser.add_argument(
+        "--source-db",
+        default=None,
+        help="Path to the active Summit database (default: <source-root>/database.sqlite)",
+    )
     parser.add_argument("--archive-root", default=None, help="Path to archive directory (default: sibling summit-archive)")
     parser.add_argument(
         "--mode",
@@ -574,7 +579,11 @@ def main() -> None:
     args = parse_args()
     source_root = Path(args.source_root).expanduser().resolve()
     archive_root = Path(args.archive_root).expanduser().resolve() if args.archive_root else source_root.with_name(source_root.name + "-archive")
-    source_db = source_root / "database.sqlite"
+    source_db = (
+        Path(args.source_db).expanduser().resolve()
+        if args.source_db
+        else source_root / "database.sqlite"
+    )
     archive_db = archive_root / "database.sqlite"
     state_path = archive_root / "archive-state.json"
 

@@ -6,6 +6,15 @@ set -euo pipefail
 # которые читает веб-админка (summit-archive-admin).
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_ROOT="${SUMMIT_SOURCE_ROOT:-$REPO_ROOT/summit}"
+if [[ -n "${SUMMIT_SOURCE_DB:-}" ]]; then
+  SOURCE_DB="$SUMMIT_SOURCE_DB"
+elif [[ -f "$SOURCE_ROOT/database.sqlite" ]]; then
+  SOURCE_DB="$SOURCE_ROOT/database.sqlite"
+elif [[ -f "$REPO_ROOT/summit-db/database.sqlite" ]]; then
+  SOURCE_DB="$REPO_ROOT/summit-db/database.sqlite"
+else
+  SOURCE_DB="$SOURCE_ROOT/database.sqlite"
+fi
 ARCHIVE_ROOT="${SUMMIT_ARCHIVE_ROOT:-$REPO_ROOT/summit-archive}"
 SCRIPT_PATH="$REPO_ROOT/archive_summit_meetings.py"
 PUSH_SCRIPT="$REPO_ROOT/push_to_hub.py"
@@ -34,8 +43,10 @@ Examples:
   summit_archive.sh sync-and-push
 
 Environment:
-  SUMMIT_SOURCE_ROOT      живая папка Summit   (default: <repo>/summit)
-  SUMMIT_ARCHIVE_ROOT     папка архива         (default: <repo>/summit-archive)
+  SUMMIT_SOURCE_ROOT      папки встреч Summit  (default: <repo>/summit)
+  SUMMIT_SOURCE_DB        живая база Summit     (default: <source-root>/database.sqlite,
+                                                 затем <repo>/summit-db/database.sqlite)
+  SUMMIT_ARCHIVE_ROOT     папка архива          (default: <repo>/summit-archive)
   MEET_ARCHIVE_HUB_URL    адрес хаба, куда отправлять встречи
   MEET_ARCHIVE_HUB_TOKEN  токен устройства (или push --token-file ПУТЬ)
 EOF
@@ -46,6 +57,7 @@ EOF
 run_nonexec() {
   python3 "$SCRIPT_PATH" \
     --source-root "$SOURCE_ROOT" \
+    --source-db "$SOURCE_DB" \
     --archive-root "$ARCHIVE_ROOT" \
     "$@"
 }
@@ -53,6 +65,7 @@ run_nonexec() {
 run() {
   exec python3 "$SCRIPT_PATH" \
     --source-root "$SOURCE_ROOT" \
+    --source-db "$SOURCE_DB" \
     --archive-root "$ARCHIVE_ROOT" \
     "$@"
 }

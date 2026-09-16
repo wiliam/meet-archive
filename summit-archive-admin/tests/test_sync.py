@@ -28,6 +28,7 @@ def roots(tmp_path, monkeypatch):
     archive = tmp_path / "summit-archive"
     live.mkdir()
     archive.mkdir()
+    monkeypatch.delenv("SUMMIT_SOURCE_DB", raising=False)
     monkeypatch.setenv("SUMMIT_SOURCE_ROOT", str(live))
     monkeypatch.setenv("SUMMIT_ARCHIVE_ROOT", str(archive))
     # живая: A (старая, в архиве), B (изменена после watermark), C (новая)
@@ -73,6 +74,73 @@ def test_delta_missing_live_db(roots, monkeypatch, tmp_path):
     monkeypatch.setenv("SUMMIT_SOURCE_ROOT", str(tmp_path / "nope"))
     d = sync_mod.compute_delta(keep_active=10)
     assert d["error"]
+
+
+def test_delta_reads_explicit_source_database(roots, monkeypatch, tmp_path):
+    database_root = tmp_path / "database"
+    database_root.mkdir()
+    source_db = database_root / "database.sqlite"
+    make_db(
+        source_db,
+        [("SPLIT", "Раздельная база", 500.0, 500.0, None)],
+    )
+    monkeypatch.setenv("SUMMIT_SOURCE_DB", str(source_db))
+
+    d = sync_mod.compute_delta(keep_active=10)
+
+    assert d["error"] is None
+    assert d["active_count"] == 1
+    assert [item["id"] for item in d["to_sync"]] == ["SPLIT"]
+
+
+def test_delta_discovers_sibling_summit_db_directory(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "summit"
+    source_db_root = repo_root / "summit-db"
+    archive_root = repo_root / "summit-archive"
+    source_root.mkdir(parents=True)
+    source_db_root.mkdir()
+    archive_root.mkdir()
+    make_db(
+        source_db_root / "database.sqlite",
+        [("SPLIT", "Раздельная база", 500.0, 500.0, None)],
+    )
+    make_db(archive_root / "database.sqlite", [])
+    monkeypatch.delenv("SUMMIT_SOURCE_ROOT", raising=False)
+    monkeypatch.delenv("SUMMIT_SOURCE_DB", raising=False)
+    monkeypatch.setenv("SUMMIT_ARCHIVE_ROOT", str(archive_root))
+
+    d = sync_mod.compute_delta(keep_active=10)
+
+    assert d["error"] is None
+    assert [item["id"] for item in d["to_sync"]] == ["SPLIT"]
+
+
+def test_delta_prefers_legacy_source_db_over_stale_summit_db(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    source_root = repo_root / "summit"
+    source_db_root = repo_root / "summit-db"
+    archive_root = repo_root / "summit-archive"
+    source_root.mkdir(parents=True)
+    source_db_root.mkdir()
+    archive_root.mkdir()
+    make_db(
+        source_root / "database.sqlite",
+        [("LEGACY", "Совместимая база", 500.0, 500.0, None)],
+    )
+    make_db(
+        source_db_root / "database.sqlite",
+        [("STALE", "Устаревшая ссылка", 400.0, 400.0, None)],
+    )
+    make_db(archive_root / "database.sqlite", [])
+    monkeypatch.delenv("SUMMIT_SOURCE_ROOT", raising=False)
+    monkeypatch.delenv("SUMMIT_SOURCE_DB", raising=False)
+    monkeypatch.setenv("SUMMIT_ARCHIVE_ROOT", str(archive_root))
+
+    d = sync_mod.compute_delta(keep_active=10)
+
+    assert d["error"] is None
+    assert [item["id"] for item in d["to_sync"]] == ["LEGACY"]
 
 
 def test_run_script_validation(roots):
