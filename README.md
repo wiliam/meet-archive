@@ -36,6 +36,29 @@ Then archive your meetings:
 ./summit_archive.sh sync         # copy everything into the archive
 ```
 
+The unified CLI exposes agent-friendly reading and all sync operations:
+
+```bash
+meet-archive recent --days 14
+meet-archive search "project name" --since 30d
+meet-archive context "project name" --since 60d --limit 5
+meet-archive show --latest --include-transcript
+
+meet-archive status
+meet-archive sync --dry-run
+meet-archive sync
+meet-archive sync-and-prune --keep-active 12          # preview only
+meet-archive sync-and-prune --keep-active 12 --apply  # performs deletion
+meet-archive push --dry-run
+meet-archive sync-and-push
+```
+
+The CLI refreshes the local archive before `recent`, `search`, `show`, and `context`. Add `--archive-only` to read the saved snapshot. If the refresh fails, the command exits with an error. Automatic refresh only copies meetings into the local archive.
+
+`context` returns bounded Markdown with summaries, topics, action items and source IDs. Add `--include-transcript` for the full transcript. `prune` and `sync-and-prune` require `--apply` to delete meetings from the source.
+
+Use `meet-archive workflow` to prepare a private draft from a Summit meeting or a corporate transcript, apply a summary template, and export the reviewed Markdown to a team folder. [Meeting workflow](docs/meeting-workflow.md)
+
 And browse them:
 
 ```bash
@@ -59,6 +82,26 @@ To also trim the live store to the 12 most recent meetings:
 
 Meetings are deleted from Summit only after they are confirmed present in the archive, and a
 backup of the live database is taken first.
+
+## Use from Codex and Claude Code
+
+The `meet-archive` plugin bundles one [shared skill](plugins/meet-archive/skills/meeting-archive/SKILL.md). It uses the local `meet-archive` command installed by `./setup.sh`. Install the plugin once from the root of this checkout, then start a new session in the project you want to work in.
+
+**Codex**
+
+```bash
+codex plugin marketplace add "$PWD"
+codex plugin add meet-archive@meet-archive-local
+```
+
+**Claude Code**
+
+```bash
+claude plugin marketplace add "$PWD"
+claude plugin install meet-archive@meet-archive-local --scope user
+```
+
+Try asking either client, “Summarize my latest meeting and list the decisions and next steps.” To invoke the skill explicitly, select `meet-archive:meeting-archive` from the `$` picker in Codex or run `/meet-archive:meeting-archive` in Claude Code. The CLI refreshes the archive before retrieving the meeting. The plugin runs on the machine with the configured CLI and uses the agent's normal shell permissions. [Codex skills guide](https://learn.chatgpt.com/docs/build-skills) · [Claude Code plugin guide](https://code.claude.com/docs/en/plugins)
 
 ## Layout
 

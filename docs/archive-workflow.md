@@ -15,9 +15,7 @@ Everything is resolved relative to the repository root (`<repo>` below):
 - Archive index: `<repo>/summit-archive/archive-index.md`
 
 The paths can be overridden with `SUMMIT_SOURCE_ROOT`, `SUMMIT_SOURCE_DB`, and
-`SUMMIT_ARCHIVE_ROOT` — the same environment variables the web admin reads. If
-`SUMMIT_SOURCE_DB` is unset, the legacy `<source-root>/database.sqlite` is preferred when present;
-otherwise the split-layout `summit-db/database.sqlite` path is used.
+`SUMMIT_ARCHIVE_ROOT` — the same environment variables the web admin reads. When `summit-db/` is configured, the tool prefers `<source-root>/database.sqlite` if present and uses `summit-db/database.sqlite` otherwise. A default installation without `summit-db/` can also discover the active database directly in the Summit app container. Set `SUMMIT_SOURCE_DB` to select a specific database.
 
 ## What gets archived
 For each meeting, the script copies:
@@ -33,6 +31,8 @@ For each meeting, the script copies:
   - `topics`
   - `transcription_chunks`
   - `transcription_segments`
+  - `split_carried_tags`
+  - `trashed_calendar_links`
   - `chat_sessions`
   - `chat_messages`
   - `calendar_events` linked to the document
@@ -65,31 +65,44 @@ For files on disk:
 
 ## Commands
 
-Prefer the `summit_archive.sh` wrapper — it fills in both roots for you.
+Prefer the unified `meet-archive` CLI. The older `summit_archive.sh` wrapper remains compatible.
 
 Dry run first. Always.
 
 ```bash
-./summit_archive.sh dry-run
+meet-archive sync --dry-run
 ```
 
 Only sync changed meetings into the archive, without deleting anything from the active store:
 
 ```bash
-./summit_archive.sh sync
+meet-archive sync
 ```
 
 Sync, then prune until only 12 active meetings remain:
 
 ```bash
-./summit_archive.sh sync-and-prune 12
+meet-archive sync-and-prune --keep-active 12          # preview only
+meet-archive sync-and-prune --keep-active 12 --apply  # apply after review
 ```
 
 Only prune, assuming the archive is already current:
 
 ```bash
-./summit_archive.sh prune 12
+meet-archive prune --keep-active 12          # preview only
+meet-archive prune --keep-active 12 --apply
 ```
+
+Project agents can read meetings directly with `meet-archive`. The CLI refreshes the local archive before returning results. Add `--archive-only` to read the saved snapshot. A refresh failure produces an error.
+
+```bash
+meet-archive search "billing" --since 30d --format json
+meet-archive context "billing" --since 60d --limit 5 --max-chars 20000
+meet-archive show --latest --include-transcript
+meet-archive show <meeting-id> --format markdown
+```
+
+Machine-readable HTTP routes serve the saved archive snapshot at `/agent/v1/meetings`, `/agent/v1/meetings/{id}`, and `/agent/v1/context`.
 
 ### Calling the script directly
 
@@ -112,6 +125,6 @@ Full option list: `python3 archive_summit_meetings.py --help`
 > the archive would silently be created inside that container instead of in the repository.
 
 ## Notes
-- `archive-index.md` is regenerated on every run so it stays consistent.
+- Sync regenerates `archive-index.md` when meetings change or the index needs to be created.
 - `archive-state.json` is updated after successful sync/prune runs.
 - Both files are generated output and are gitignored.

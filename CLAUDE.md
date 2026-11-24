@@ -18,6 +18,8 @@ folder per meeting (audio + exported markdown). This kit does three things:
 4. **`push_to_hub.py`** — sends archived meetings to a hosted instance (the *hub*) over HTTP, so
    several Macs end up searchable in one place. Rows and `document.md` only; audio stays on the
    originating machine. See `docs/multi-device.md`.
+5. **`meet-archive`** — unified read/sync CLI for humans and project agents. `context` emits
+   bounded Markdown; destructive prune modes require explicit `--apply`.
 
 ## Required layout — do not rearrange
 
@@ -42,9 +44,9 @@ Two independent conventions meet here, which is why the layout is load-bearing:
 - It derives the archive path as *sibling of source, named
   `<source>-archive`* when `--archive-root` is omitted.
 - `summit-archive-admin/db.py` defaults `SUMMIT_ARCHIVE_ROOT` to `../summit-archive`, and
-  `sync.py` defaults `SUMMIT_SOURCE_ROOT` to `<archive-root>/../summit`. It prefers the legacy
-  `<source-root>/database.sqlite` when present, then tries
-  `<archive-root>/../summit-db/database.sqlite`.
+  `sync.py` defaults `SUMMIT_SOURCE_ROOT` to `<archive-root>/../summit`. With a configured
+  `summit-db` directory, it prefers `<source-root>/database.sqlite` when present. In a default
+  checkout without that directory, it can find the live database in the Summit app container.
 
 Keep `summit/`, optional `summit-db/`, and `summit-archive/` as siblings of
 `summit-archive-admin/` and everything works with zero configuration. To use different locations,
@@ -73,6 +75,12 @@ It checks prerequisites, detects legacy or split Summit storage, links `summit/`
 
 If meeting folders contain audio but no `document.md`, the app's markdown export is off —
 see `docs/summit-app-notes.md`.
+
+## Agent access
+
+Use `meet-archive show --latest --include-transcript` for the latest transcript. Use `recent`, `search`, and `context` for discovery and analysis. These commands find the configured source, refresh the archive, and read the result in one call. Use `--archive-only` when the task calls for the saved snapshot. If a refresh fails, report that the archive could not be updated.
+
+The `/agent/v1/*` HTTP routes serve the saved archive snapshot. Summary output excludes full transcripts by default. For explicit sync operations, use `meet-archive sync`, `status`, `push`, and the guarded prune commands.
 
 ## Running the admin
 

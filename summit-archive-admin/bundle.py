@@ -37,11 +37,15 @@ CHILD_TABLES = (
     "attachments",
     "document_analytics",
     "document_versions",
+    "split_carried_tags",
+    "trashed_calendar_links",
 )
 
 # Составной первичный ключ: после разводки два разных исходных тега могут
 # схлопнуться в один целевой и столкнуться. Вставляются через INSERT OR IGNORE.
-JUNCTION_TABLES = frozenset({"document_tags", "document_speakers"})
+JUNCTION_TABLES = frozenset(
+    {"document_tags", "document_speakers", "split_carried_tags"}
+)
 
 MERGE_ORDER = LOOKUP_TABLES + (DOCUMENT_TABLE,) + CHILD_TABLES
 BUNDLE_TABLES = frozenset(MERGE_ORDER)

@@ -154,14 +154,36 @@ ok "summit-archive/"
 # --- 5. Окружение для админки ----------------------------------------------
 say "Ставлю зависимости веб-админки"
 VENV="$REPO_ROOT/summit-archive-admin/.venv"
-if [[ ! -d "$VENV" ]]; then
-  python3 -m venv "$VENV"
+if [[ ! -x "$VENV/bin/python" ]] || ! "$VENV/bin/python" -c 'import sys' >/dev/null 2>&1; then
+  if [[ -d "$VENV" ]]; then
+    warn "Виртуальное окружение ссылается на удалённый Python — пересоздаю"
+    python3 -m venv --clear "$VENV"
+  else
+    python3 -m venv "$VENV"
+  fi
 fi
-"$VENV/bin/pip" install --quiet --upgrade pip
-"$VENV/bin/pip" install --quiet -r "$REPO_ROOT/summit-archive-admin/requirements.txt"
+"$VENV/bin/python" -m pip install --quiet --upgrade pip
+"$VENV/bin/python" -m pip install --quiet -r "$REPO_ROOT/summit-archive-admin/requirements.txt"
 ok "$( "$VENV/bin/python" -c 'import fastapi; print("fastapi", fastapi.__version__)' )"
 
-# --- 6. Пробный прогон -----------------------------------------------------
+# --- 6. CLI ----------------------------------------------------------------
+if [[ -x "$REPO_ROOT/meet-archive" ]]; then
+  CLI_DIR="$HOME/.local/bin"
+  mkdir -p "$CLI_DIR"
+  CLI_LINK="$CLI_DIR/meet-archive"
+  if [[ -e "$CLI_LINK" && ! -L "$CLI_LINK" ]]; then
+    warn "$CLI_LINK уже существует и не является симлинком — не перезаписываю"
+  else
+    ln -sfn "$REPO_ROOT/meet-archive" "$CLI_LINK"
+    ok "CLI: $CLI_LINK"
+  fi
+  case ":$PATH:" in
+    *":$CLI_DIR:"*) ;;
+    *) warn "$CLI_DIR не входит в PATH; вызывайте CLI по полному пути" ;;
+  esac
+fi
+
+# --- 7. Пробный прогон -----------------------------------------------------
 say "Пробный прогон архивации (dry-run, ничего не меняет)"
 chmod +x "$REPO_ROOT/summit_archive.sh"
 if "$REPO_ROOT/summit_archive.sh" dry-run; then
@@ -171,7 +193,7 @@ else
   warn "Частая причина: приложение не создало базу. Запишите одну встречу и повторите."
 fi
 
-# --- 7. Что дальше ---------------------------------------------------------
+# --- 8. Что дальше ---------------------------------------------------------
 say "Готово"
 cat <<EOF
 Раскладка:
@@ -180,11 +202,14 @@ cat <<EOF
   $REPO_ROOT/summit-archive   архив
 
 Дальше:
+  meet-archive status                         состояние архива и синхронизации
+  meet-archive context "запрос" --since 30d  контекст встреч для агента
+  meet-archive sync                           перенести встречи в архив
   ./summit_archive.sh sync                 перенести встречи в архив
   ./summit_archive.sh sync-and-prune 12    архивировать и оставить 12 активных
 
 Веб-админка:
-  summit-archive-admin/.venv/bin/uvicorn app:app --port 8377 --app-dir summit-archive-admin
+  summit-archive-admin/.venv/bin/python -m uvicorn app:app --port 8377 --app-dir summit-archive-admin
   → http://127.0.0.1:8377
 
 Перед любым prune сначала: ./summit_archive.sh dry-run

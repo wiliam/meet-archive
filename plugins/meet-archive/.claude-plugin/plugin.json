@@ -1,0 +1,6 @@
+{
+  "name": "meet-archive",
+  "version": "0.1.0",
+  "description": "Find and analyze meetings from the local meeting archive.",
+  "author": { "name": "Meet Archive" }
+}

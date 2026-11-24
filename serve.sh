@@ -4,6 +4,7 @@
 #
 #   ./serve.sh open      поднять (если нужно) и открыть в браузере   ← основной сценарий
 #   ./serve.sh start     поднять в фоне
+#   ./serve.sh app       foreground + открыть браузер (для Meet Archive.app)
 #   ./serve.sh stop      остановить
 #   ./serve.sh status    состояние
 #   ./serve.sh logs      следить за логом
@@ -49,7 +50,7 @@ wait_until_ready() {
 # --- операции --------------------------------------------------------------
 
 ensure_venv() {
-  if [[ ! -x "$VENV/bin/uvicorn" ]]; then
+  if [[ ! -x "$VENV/bin/python" ]] || ! "$VENV/bin/python" -c 'import uvicorn' >/dev/null 2>&1; then
     echo "Окружение не готово — запускаю setup.sh…"
     "$REPO_ROOT/setup.sh" || die "setup.sh не отработал; запустите его вручную."
   fi
@@ -68,7 +69,7 @@ cmd_start() {
   ensure_venv
   mkdir -p "$RUN_DIR"
 
-  nohup "$VENV/bin/uvicorn" app:app \
+  nohup "$VENV/bin/python" -m uvicorn app:app \
     --host "$HOST" --port "$PORT" --app-dir "$ADMIN_DIR" \
     >> "$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
@@ -126,11 +127,23 @@ cmd_open() {
   open "$URL"
 }
 
+# Режим подписанного .app: Uvicorn остаётся foreground-процессом приложения.
+# Это сохраняет TCC responsibility chain и доступ к контейнеру Summit.
+cmd_app() {
+  if port_answers; then
+    open "$URL"
+    return 0
+  fi
+  ensure_venv
+  (wait_until_ready && open "$URL") &
+  cmd_run
+}
+
 # Foreground-режим для launchd: процесс должен жить, иначе KeepAlive
 # будет перезапускать его в цикле.
 cmd_run() {
   ensure_venv
-  exec "$VENV/bin/uvicorn" app:app \
+  exec "$VENV/bin/python" -m uvicorn app:app \
     --host "$HOST" --port "$PORT" --app-dir "$ADMIN_DIR"
 }
 
@@ -141,6 +154,7 @@ cmd_logs() {
 
 case "${1:-open}" in
   open)   cmd_open   ;;
+  app)    cmd_app    ;;
   start)  cmd_start  ;;
   run)    cmd_run    ;;
   stop)   cmd_stop   ;;

@@ -36,6 +36,7 @@ FK_REWRITES = {
     ("folders", "template_id"): "summarization_templates",
     ("folders", "parent_folder_id"): "folders",
     ("document_tags", "tag_id"): "tags",
+    ("split_carried_tags", "tag_id"): "tags",
     ("document_speakers", "speaker_id"): "speakers",
     ("transcription_segments", "speaker_id"): "speakers",
     ("speakers", "parent_speaker_id"): "speakers",

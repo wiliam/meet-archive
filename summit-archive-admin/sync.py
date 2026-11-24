@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+from contextlib import closing
 from pathlib import Path
 
 import db
@@ -28,13 +29,21 @@ def source_root() -> Path:
 def source_db() -> Path:
     configured = os.environ.get("SUMMIT_SOURCE_DB")
     if configured:
-        return Path(configured)
+        return Path(configured).expanduser()
     legacy_layout = source_root() / "database.sqlite"
-    if legacy_layout.exists():
-        return legacy_layout
     split_layout = db.archive_root().parent / "summit-db" / "database.sqlite"
     if split_layout.exists():
-        return split_layout
+        return legacy_layout if legacy_layout.exists() else split_layout
+
+    # Checkouts set up before the summit-db link may still hold a stale copy
+    # in summit/. Keep using the live container for those default installs.
+    if not (os.environ.get("SUMMIT_SOURCE_ROOT") or os.environ.get("SUMMIT_ARCHIVE_ROOT")):
+        modern = (
+            Path.home()
+            / "Library/Containers/app.summitnotes/Data/Library/Application Support/Summit/Database/database.sqlite"
+        )
+        if modern.is_file() and modern.stat().st_size > 0:
+            return modern
     return legacy_layout
 
 
@@ -63,7 +72,7 @@ def _connect_ro(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def compute_delta(keep_active: int) -> dict:
+def _compute_delta_direct(keep_active: int) -> dict:
     """Повторяет селекторы скрипта переноса (read-only) для предпросмотра."""
     src_db = source_db()
     if not src_db.exists():
@@ -72,13 +81,12 @@ def compute_delta(keep_active: int) -> dict:
     state = load_state()
     watermark = state.get("last_successful_sync_at")
 
-    src = _connect_ro(src_db)
-    arc = db.connect()
-    try:
-        archive_ids = {
-            r["id"] for r in arc.execute("SELECT id FROM documents").fetchall()
-        }
+    archive_ids = set()
+    if db.db_path().exists():
+        with closing(db.connect()) as arc:
+            archive_ids = {row["id"] for row in arc.execute("SELECT id FROM documents")}
 
+    with closing(_connect_ro(src_db)) as src:
         active = src.execute(
             """SELECT id, title, created_date, modified_date
                FROM documents WHERE deleted_at IS NULL
@@ -129,9 +137,36 @@ def compute_delta(keep_active: int) -> dict:
             "unsafe": unsafe,
             "overflow": overflow,
         }
-    finally:
-        src.close()
-        arc.close()
+
+
+def compute_delta(keep_active: int) -> dict:
+    """Считает дельту в отдельном процессе, который можно прервать по таймауту.
+
+    Чтение базы в контейнере Summit иногда блокировалось дольше таймаута SQLite.
+    Ограничиваем ожидание и для веб-страницы, и для CLI.
+    """
+    timeout = float(os.environ.get("MEET_ARCHIVE_SOURCE_TIMEOUT", "5"))
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--delta-worker", str(keep_active)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "error": (
+                f"Живая база Summit не ответила за {timeout:g} сек. "
+                "Остановите запись или закройте Summit и повторите."
+            )
+        }
+    if proc.returncode != 0:
+        error = proc.stderr.strip() or "Не удалось прочитать живую базу Summit"
+        return {"error": error}
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {"error": "Процесс чтения Summit вернул некорректный ответ"}
 
 
 def run_script(mode: str, keep_active: int | None, dry_run: bool) -> dict:
@@ -141,6 +176,10 @@ def run_script(mode: str, keep_active: int | None, dry_run: bool) -> dict:
         return {"ok": False, "output": "Для prune нужен keep-active ≥ 1"}
     if not script_path().exists():
         return {"ok": False, "output": f"Скрипт не найден: {script_path()}"}
+
+    probe = compute_delta(keep_active or 1)
+    if probe.get("error"):
+        return {"ok": False, "output": probe["error"]}
 
     cmd = [
         sys.executable,
@@ -158,7 +197,6 @@ def run_script(mode: str, keep_active: int | None, dry_run: bool) -> dict:
         cmd += ["--keep-active", str(keep_active)]
     if dry_run:
         cmd.append("--dry-run")
-
     if not RUN_LOCK.acquire(blocking=False):
         return {"ok": False, "output": "Синхронизация уже запущена, подождите."}
     try:
@@ -175,3 +213,11 @@ def run_script(mode: str, keep_active: int | None, dry_run: bool) -> dict:
         return {"ok": False, "output": "Скрипт не завершился за 15 минут — прерван."}
     finally:
         RUN_LOCK.release()
+
+
+if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "--delta-worker":
+    try:
+        delta = _compute_delta_direct(int(sys.argv[2]))
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        delta = {"error": f"Не удалось рассчитать дельту синхронизации: {exc}"}
+    print(json.dumps(delta, ensure_ascii=False))

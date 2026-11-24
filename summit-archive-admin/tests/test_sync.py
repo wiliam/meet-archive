@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -141,6 +142,53 @@ def test_delta_prefers_legacy_source_db_over_stale_summit_db(monkeypatch, tmp_pa
 
     assert d["error"] is None
     assert [item["id"] for item in d["to_sync"]] == ["LEGACY"]
+
+
+def test_first_sync_preview_leaves_missing_archive_untouched(roots, tmp_path, monkeypatch):
+    archive = tmp_path / "new-archive"
+    monkeypatch.setenv("SUMMIT_ARCHIVE_ROOT", str(archive))
+
+    delta = sync_mod.compute_delta(keep_active=10)
+    preview = sync_mod.run_script("sync", None, dry_run=True)
+
+    assert delta["error"] is None
+    assert delta["archive_count"] == 0
+    assert {row["id"] for row in delta["to_sync"]} == {"A", "B", "C"}
+    assert preview["ok"], preview["output"]
+    assert "Dry run only" in preview["output"]
+    assert not archive.exists()
+
+
+def test_delta_timeout_stops_sync_before_running_archiver(monkeypatch):
+    calls = []
+
+    def timeout(cmd, *, capture_output, text, timeout):
+        calls.append(cmd)
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setenv("MEET_ARCHIVE_SOURCE_TIMEOUT", "0.5")
+    monkeypatch.setattr(sync_mod.subprocess, "run", timeout)
+
+    result = sync_mod.run_script("sync", None, dry_run=True)
+
+    assert not result["ok"]
+    assert "за 0.5 сек." in result["output"]
+    assert "закройте Summit" in result["output"]
+    assert len(calls) == 1 and calls[0][2] == "--delta-worker"
+
+
+def test_delta_reads_database_separately_from_meeting_files(roots, monkeypatch, tmp_path):
+    """Summit 1.13 moved SQLite under Application Support, but kept media elsewhere."""
+    live, _archive = roots
+    modern_db = tmp_path / "Application Support" / "Summit" / "Database" / "database.sqlite"
+    modern_db.parent.mkdir(parents=True)
+    (live / "database.sqlite").replace(modern_db)
+    monkeypatch.setenv("SUMMIT_SOURCE_DB", str(modern_db))
+
+    d = sync_mod.compute_delta(keep_active=10)
+
+    assert d["error"] is None
+    assert d["active_count"] == 3
 
 
 def test_run_script_validation(roots):

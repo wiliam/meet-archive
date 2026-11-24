@@ -7,6 +7,14 @@ Read-only веб-админка над архивом встреч Summit AI
 (FTS5 по транскриптам, темам и названиям), карточка встречи с участниками,
 темами, action items, аудиоплеерами и транскриптом, экспорт транскрипта в `.md`.
 
+Read-only маршруты для агентов:
+
+- `GET /agent/v1/meetings?q=...&since=30d&limit=20` — JSON-поиск;
+- `GET /agent/v1/meetings/{id}?include_transcript=true` — JSON встречи;
+- `GET /agent/v1/context?q=...&since=60d&limit=5&max_chars=20000` — ограниченный Markdown-контекст.
+
+HTTP-маршруты читают сохранённый архив. Команда `meet-archive` по умолчанию синхронизирует архив перед чтением.
+
 База открывается строго в режиме `mode=ro` — админка не может изменить архив.
 
 Страница **/sync** показывает дельту с живой базой Summit (что нового/изменённого
@@ -21,8 +29,8 @@ Read-only веб-админка над архивом встреч Summit AI
 
 ```bash
 cd summit-archive-admin
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn app:app --port 8377
+python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m uvicorn app:app --port 8377
 # → http://127.0.0.1:8377
 ```
 
@@ -31,7 +39,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 | Переменная | Назначение | По умолчанию |
 |---|---|---|
 | `SUMMIT_ARCHIVE_ROOT` | Путь к папке архива | `../summit-archive` |
-| `SUMMIT_SOURCE_ROOT` | Путь к живой базе Summit (для /sync) | `../summit` |
+| `SUMMIT_SOURCE_ROOT` | Путь к папкам/аудио живых встреч Summit | `../summit` |
+| `SUMMIT_SOURCE_DB` | Путь к живой базе Summit | Настроенная раскладка `summit/` и `summit-db/` или обнаруженная база в контейнере Summit |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | Включают HTTP Basic Auth (обе сразу) | выключено |
 
 ## Тесты

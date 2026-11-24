@@ -89,12 +89,12 @@ cat > "$SRC" <<EOF
 static const char *REPO = "$REPO_ROOT";
 
 /* Один бинарь на два режима:
-     без аргументов  -> serve.sh open   (иконка в Dock)
+     без аргументов  -> serve.sh app    (foreground сохраняет TCC)
      "run"           -> serve.sh run    (LaunchAgent; процесс держится живым)
    launchd тоже обязан запускать именно бинарь: с shell-скриптом TCC видит
    /bin/bash и закрывает доступ к репозиторию в ~/Documents. */
 int main(int argc, char **argv) {
-    const char *mode = (argc > 1) ? argv[1] : "open";
+    const char *mode = (argc > 1) ? argv[1] : "app";
 
     char serve[4096];
     snprintf(serve, sizeof serve, "%s/serve.sh", REPO);

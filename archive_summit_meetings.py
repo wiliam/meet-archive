@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import os
 import shutil
 import sqlite3
+import time
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
+
+ARCHIVE_LOCK_TIMEOUT = 3.0
 
 DIRECT_DOCUMENT_TABLES = [
     ("action_items", "document_id"),
@@ -21,6 +27,8 @@ DIRECT_DOCUMENT_TABLES = [
     ("topics", "document_id"),
     ("transcription_chunks", "document_id"),
     ("transcription_segments", "document_id"),
+    ("split_carried_tags", "document_id"),
+    ("trashed_calendar_links", "document_id"),
 ]
 
 CLEAR_TABLES_ON_INIT = [
@@ -53,8 +61,11 @@ class DocumentSummary:
     tags: list[str]
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+def connect(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
+    if read_only:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    else:
+        conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -94,13 +105,21 @@ def create_source_backup(src: sqlite3.Connection, source_db: Path) -> Path:
     return backup
 
 
-def insert_rows(dest: sqlite3.Connection, table: str, rows: Sequence[sqlite3.Row]) -> None:
+def insert_rows(
+    dest: sqlite3.Connection, table: str, rows: Sequence[sqlite3.Row], *, update_by_id: bool = False
+) -> None:
     if not rows:
         return
     columns = list(rows[0].keys())
     quoted = ", ".join(f'"{c}"' for c in columns)
     placeholders = ", ".join("?" for _ in columns)
-    sql = f"INSERT OR REPLACE INTO {table} ({quoted}) VALUES ({placeholders})"
+    values = f"INTO {table} ({quoted}) VALUES ({placeholders})"
+    if update_by_id:
+        # REPLACE deletes the old row and can cascade into other archived meetings.
+        updates = ", ".join(f'"{col}" = excluded."{col}"' for col in columns if col != "id")
+        sql = f"INSERT {values} ON CONFLICT(id) DO UPDATE SET {updates}"
+    else:
+        sql = f"INSERT OR REPLACE {values}"
     dest.executemany(sql, [tuple(row[c] for c in columns) for row in rows])
 
 
@@ -132,12 +151,28 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> dict[str, sqlite3.Ro
     return {row["name"]: row for row in conn.execute(f'PRAGMA table_info("{table}")')}
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (table,)
+    ).fetchone() is not None
+
+
+def _is_fts_shadow_table(name: str) -> bool:
+    return any(
+        name.endswith(suffix)
+        for suffix in ("_fts_data", "_fts_idx", "_fts_content", "_fts_docsize", "_fts_config")
+    )
+
+
 def reconcile_archive_schema(
     src: sqlite3.Connection, archive_conn: sqlite3.Connection, dry_run: bool
 ) -> None:
-    """Догоняет схему архива после миграций приложения: ADD COLUMN для колонок,
-    появившихся в живой базе. Новые таблицы не создаёт (скрипт их всё равно не
-    копирует) — только предупреждает, чтобы дрейф не остался незамеченным."""
+    """Догоняет схему архива после миграций приложения.
+
+    Колонки добавляются через ALTER TABLE, а новые таблицы, индексы и триггеры
+    воспроизводятся из sqlite_master. Shadow-таблицы FTS5 не копируются: их
+    создаёт сама CREATE VIRTUAL TABLE.
+    """
     src_tables = [
         r["name"]
         for r in src.execute(
@@ -151,10 +186,11 @@ def reconcile_archive_schema(
         )
     }
 
-    alters: list[str] = []
+    statements: list[str] = []
     for table in src_tables:
+        if _is_fts_shadow_table(table):
+            continue
         if table not in archive_tables:
-            print(f"WARNING: table '{table}' exists in source but not in archive (not copied by this script)")
             continue
         archive_cols = _table_columns(archive_conn, table)
         for name, col in _table_columns(src, table).items():
@@ -170,26 +206,64 @@ def reconcile_archive_schema(
                 ddl += f" NOT NULL DEFAULT {col['dflt_value']}"
             elif col["dflt_value"] is not None:
                 ddl += f" DEFAULT {col['dflt_value']}"
-            alters.append(ddl)
+            statements.append(ddl)
 
-    if not alters:
+    archive_objects = {
+        (r["type"], r["name"])
+        for r in archive_conn.execute(
+            "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'index', 'trigger')"
+        )
+    }
+    for object_type in ("table", "index", "trigger"):
+        rows = src.execute(
+            """SELECT type, name, sql FROM sqlite_master
+               WHERE type = ? AND sql IS NOT NULL ORDER BY name""",
+            (object_type,),
+        ).fetchall()
+        for row in rows:
+            if (row["type"], row["name"]) in archive_objects:
+                continue
+            if object_type == "table" and _is_fts_shadow_table(row["name"]):
+                continue
+            statements.append(row["sql"])
+
+    missing_migrations: list[str] = []
+    if _table_exists(src, "grdb_migrations") and _table_exists(archive_conn, "grdb_migrations"):
+        archive_migrations = {
+            r[0] for r in archive_conn.execute("SELECT identifier FROM grdb_migrations")
+        }
+        missing_migrations = [
+            r[0]
+            for r in src.execute("SELECT identifier FROM grdb_migrations ORDER BY rowid")
+            if r[0] not in archive_migrations
+        ]
+
+    if not statements and not missing_migrations:
         return
     if dry_run:
         print("Schema reconciliation needed (dry-run, not applied):")
-        for ddl in alters:
+        for ddl in statements:
             print(f"  {ddl}")
+        if missing_migrations:
+            print(f"  add migration markers: {', '.join(missing_migrations)}")
         return
     archive_conn.execute("BEGIN")
     try:
-        for ddl in alters:
+        for ddl in statements:
             archive_conn.execute(ddl)
+        archive_conn.executemany(
+            "INSERT OR IGNORE INTO grdb_migrations(identifier) VALUES (?)",
+            [(identifier,) for identifier in missing_migrations],
+        )
         archive_conn.commit()
     except Exception:
         archive_conn.rollback()
         raise
     print("Schema reconciled with source:")
-    for ddl in alters:
+    for ddl in statements:
         print(f"  {ddl}")
+    if missing_migrations:
+        print(f"  added migration markers: {', '.join(missing_migrations)}")
 
 
 def load_state(state_path: Path) -> dict[str, Any]:
@@ -231,6 +305,13 @@ def copy_lookup_rows(src: sqlite3.Connection, dest: sqlite3.Connection, doc: sql
         if row[0]:
             tag_ids.add(row[0])
 
+    if _table_exists(src, "split_carried_tags"):
+        for row in src.execute(
+            "SELECT tag_id FROM split_carried_tags WHERE document_id = ?", (document_id,)
+        ):
+            if row[0]:
+                tag_ids.add(row[0])
+
     for row in src.execute("SELECT speaker_id FROM document_speakers WHERE document_id = ?", (document_id,)):
         if row[0]:
             speaker_ids.add(row[0])
@@ -239,10 +320,10 @@ def copy_lookup_rows(src: sqlite3.Connection, dest: sqlite3.Connection, doc: sql
         if row[0]:
             speaker_ids.add(row[0])
 
+    folder_rows = []
     if folder_ids:
         placeholders = ", ".join("?" for _ in folder_ids)
         folder_rows = src.execute(f"SELECT * FROM folders WHERE id IN ({placeholders})", tuple(folder_ids)).fetchall()
-        insert_rows(dest, "folders", folder_rows)
         for row in folder_rows:
             if row["template_id"]:
                 template_ids.add(row["template_id"])
@@ -250,12 +331,14 @@ def copy_lookup_rows(src: sqlite3.Connection, dest: sqlite3.Connection, doc: sql
     if template_ids:
         placeholders = ", ".join("?" for _ in template_ids)
         rows = src.execute(f"SELECT * FROM summarization_templates WHERE id IN ({placeholders})", tuple(template_ids)).fetchall()
-        insert_rows(dest, "summarization_templates", rows)
+        insert_rows(dest, "summarization_templates", rows, update_by_id=True)
+
+    insert_rows(dest, "folders", folder_rows, update_by_id=True)
 
     if tag_ids:
         placeholders = ", ".join("?" for _ in tag_ids)
         rows = src.execute(f"SELECT * FROM tags WHERE id IN ({placeholders})", tuple(tag_ids)).fetchall()
-        insert_rows(dest, "tags", rows)
+        insert_rows(dest, "tags", rows, update_by_id=True)
 
     pending = set(speaker_ids)
     seen: set[str] = set()
@@ -267,7 +350,9 @@ def copy_lookup_rows(src: sqlite3.Connection, dest: sqlite3.Connection, doc: sql
         row = src.execute("SELECT * FROM speakers WHERE id = ?", (speaker_id,)).fetchone()
         if row is None:
             continue
-        insert_rows(dest, "speakers", [row])
+        insert_rows(dest, "speakers", [row], update_by_id=True)
+        if _table_exists(src, "person_email_links") and _table_exists(dest, "person_email_links"):
+            copy_query_rows(src, dest, "person_email_links", "speaker_id = ?", (speaker_id,))
         parent_id = row["parent_speaker_id"]
         if parent_id and parent_id not in seen:
             pending.add(parent_id)
@@ -293,9 +378,12 @@ def copy_document_to_archive(src: sqlite3.Connection, dest: sqlite3.Connection, 
     insert_rows(dest, "documents", [doc])
 
     for table, column in DIRECT_DOCUMENT_TABLES:
-        copy_query_rows(src, dest, table, f"{column} = ?", (document_id,))
+        if _table_exists(src, table) and _table_exists(dest, table):
+            copy_query_rows(src, dest, table, f"{column} = ?", (document_id,))
 
     copy_query_rows(src, dest, "calendar_events", "linked_document_id = ?", (document_id,))
+    if _table_exists(src, "calendar_document_links") and _table_exists(dest, "calendar_document_links"):
+        copy_query_rows(src, dest, "calendar_document_links", "document_id = ?", (document_id,))
 
     session_rows = src.execute("SELECT * FROM chat_sessions WHERE document_id = ?", (document_id,)).fetchall()
     insert_rows(dest, "chat_sessions", session_rows)
@@ -307,6 +395,23 @@ def copy_document_to_archive(src: sqlite3.Connection, dest: sqlite3.Connection, 
             tuple(session_ids),
         ).fetchall()
         insert_rows(dest, "chat_messages", message_rows)
+
+        if _table_exists(src, "saved_chat_runs") and _table_exists(dest, "saved_chat_runs"):
+            run_rows = src.execute(
+                f"SELECT * FROM saved_chat_runs WHERE chat_session_id IN ({placeholders})",
+                tuple(session_ids),
+            ).fetchall()
+            definition_ids = {
+                row["saved_definition_id"] for row in run_rows if row["saved_definition_id"]
+            }
+            if definition_ids and _table_exists(dest, "saved_chat_definitions"):
+                definition_placeholders = ", ".join("?" for _ in definition_ids)
+                definition_rows = src.execute(
+                    f"SELECT * FROM saved_chat_definitions WHERE id IN ({definition_placeholders})",
+                    tuple(definition_ids),
+                ).fetchall()
+                insert_rows(dest, "saved_chat_definitions", definition_rows, update_by_id=True)
+            insert_rows(dest, "saved_chat_runs", run_rows)
 
     folder_name = None
     if doc["folder_id"]:
@@ -575,29 +680,75 @@ def prune_documents(
     return pruned
 
 
+@contextmanager
+def archive_writer_lock(archive_root: Path):
+    if not archive_root.is_dir():
+        archive_root.mkdir(parents=True, exist_ok=True)
+    # Lock the directory itself. Closing the descriptor releases the lock,
+    # including when the process exits unexpectedly.
+    fd = os.open(archive_root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        deadline = time.monotonic() + ARCHIVE_LOCK_TIMEOUT
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise SystemExit("Архив занят другим процессом. Повторите синхронизацию позже.") from None
+                time.sleep(min(remaining, 0.05))
+        yield
+    finally:
+        os.close(fd)
+
+
 def main() -> None:
     args = parse_args()
     source_root = Path(args.source_root).expanduser().resolve()
-    archive_root = Path(args.archive_root).expanduser().resolve() if args.archive_root else source_root.with_name(source_root.name + "-archive")
+    archive_root = (
+        Path(args.archive_root).expanduser().resolve()
+        if args.archive_root
+        else source_root.with_name(source_root.name + "-archive")
+    )
     source_db = (
         Path(args.source_db).expanduser().resolve()
         if args.source_db
         else source_root / "database.sqlite"
     )
-    archive_db = archive_root / "database.sqlite"
-    state_path = archive_root / "archive-state.json"
-
     if not source_db.exists():
         raise SystemExit(f"Source DB not found: {source_db}")
+    archive_db = archive_root / "database.sqlite"
+    same_db = archive_db.exists() and archive_db.samefile(source_db)
+    if archive_root == source_root or same_db:
+        raise SystemExit("Source and archive must be separate.")
 
-    src = connect(source_db)
+    lock = nullcontext() if args.dry_run else archive_writer_lock(archive_root)
+    with lock:
+        run_archive(args, source_root, source_db, archive_root)
+
+
+def run_archive(args: argparse.Namespace, source_root: Path, source_db: Path, archive_root: Path) -> None:
+    archive_db = archive_root / "database.sqlite"
+    state_path = archive_root / "archive-state.json"
+    index_path = archive_root / "archive-index.md"
+
+    src = connect(source_db, read_only=args.dry_run or args.mode == "sync")
     try:
-        ensure_archive_db(src, archive_db)
-        archive_conn = connect(archive_db)
+        preview_new_archive = args.dry_run and not archive_db.exists()
+        if preview_new_archive:
+            archive_conn = sqlite3.connect(":memory:")
+        else:
+            ensure_archive_db(src, archive_db)
+            archive_conn = connect(archive_db, read_only=args.dry_run)
         try:
-            reconcile_archive_schema(src, archive_conn, args.dry_run)
+            if preview_new_archive:
+                archive_conn.execute("CREATE TABLE documents (id TEXT PRIMARY KEY)")
+            else:
+                reconcile_archive_schema(src, archive_conn, args.dry_run)
             state = load_state(state_path)
             watermark = state.get("last_successful_sync_at")
+            sync_started_at = utc_now_ts()
             sync_ids = (
                 select_documents_for_sync(src, archive_conn, args.document_id, watermark)
                 if args.mode in {"sync", "sync-and-prune"}
@@ -625,6 +776,9 @@ def main() -> None:
             if args.dry_run:
                 print("Dry run only; no changes made.")
                 return
+            if args.mode == "sync" and not sync_ids and index_path.is_file() and state_path.is_file():
+                print("Synced meetings: 0\nPruned meetings: 0")
+                return
 
             backup_path = None
             if not args.skip_backup and args.mode in {"prune", "sync-and-prune"}:
@@ -636,7 +790,7 @@ def main() -> None:
 
             if sync_ids:
                 synced = sync_documents(src, archive_conn, source_root, archive_root, sync_ids)
-                state["last_successful_sync_at"] = utc_now_ts()
+                state["last_successful_sync_at"] = sync_started_at
                 state["last_sync_mode"] = args.mode
                 state["last_synced_count"] = len(synced)
 

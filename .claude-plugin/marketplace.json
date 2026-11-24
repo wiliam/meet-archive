@@ -1,0 +1,12 @@
+{
+  "name": "meet-archive-local",
+  "description": "Local plugin for finding and analyzing archived meetings.",
+  "owner": { "name": "Meet Archive" },
+  "plugins": [
+    {
+      "name": "meet-archive",
+      "source": "./plugins/meet-archive",
+      "description": "Find and analyze meetings from the local meeting archive."
+    }
+  ]
+}

@@ -86,6 +86,12 @@ def _rows(conn, table: str, where: str, params) -> list[dict]:
     return [bundle_mod.encode_row(table, row) for row in cursor]
 
 
+def _table_exists(conn, table: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", (table,)
+    ).fetchone() is not None
+
+
 def _one(conn, table: str, row_id) -> list[dict]:
     if not row_id:
         return []
@@ -137,14 +143,28 @@ def build_bundle(conn, doc_id: str, *, device_label: str) -> dict:
         if rows:
             tables[table] = rows
 
-    tag_rows = [
-        bundle_mod.encode_row("tags", row)
+    tag_ids = {
+        row["tag_id"]
         for row in conn.execute(
-            "SELECT t.* FROM tags t JOIN document_tags dt ON dt.tag_id = t.id"
-            " WHERE dt.document_id = ?",
-            (doc_id,),
+            "SELECT tag_id FROM document_tags WHERE document_id = ?", (doc_id,)
         )
-    ]
+    }
+    if _table_exists(conn, "split_carried_tags"):
+        tag_ids.update(
+            row["tag_id"]
+            for row in conn.execute(
+                "SELECT tag_id FROM split_carried_tags WHERE document_id = ?", (doc_id,)
+            )
+        )
+    tag_rows = []
+    if tag_ids:
+        placeholders = ", ".join("?" for _ in tag_ids)
+        tag_rows = [
+            bundle_mod.encode_row("tags", row)
+            for row in conn.execute(
+                f"SELECT * FROM tags WHERE id IN ({placeholders})", tuple(tag_ids)
+            )
+        ]
     if tag_rows:
         tables["tags"] = tag_rows
 
@@ -153,6 +173,8 @@ def build_bundle(conn, doc_id: str, *, device_label: str) -> dict:
         tables["speakers"] = speakers
 
     for table in bundle_mod.CHILD_TABLES:
+        if not _table_exists(conn, table):
+            continue
         rows = _rows(conn, table, "document_id = ?", (doc_id,))
         if rows:
             tables[table] = rows

@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -25,6 +25,7 @@ import config
 import db
 import hub as hub_mod
 import ingest_api
+import reader as reader_mod
 import sync as sync_mod
 from export import build_markdown, export_filename, fmt_date, fmt_duration, fmt_ts
 
@@ -236,6 +237,74 @@ def export_md(doc_id: str, conn=Depends(get_conn)):
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )
+
+
+def _agent_query(
+    q: str | None,
+    since: str | None,
+    limit: int,
+    folder: str | None,
+    tag: str | None,
+) -> reader_mod.MeetingQuery:
+    try:
+        since_timestamp = reader_mod.parse_since(since)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return reader_mod.MeetingQuery(
+        text=q,
+        since=since_timestamp,
+        limit=max(1, min(limit, 100)),
+        folder=folder,
+        tag=tag,
+    )
+
+
+@app.get("/agent/v1/meetings")
+def agent_meetings(
+    q: str | None = None,
+    since: str | None = None,
+    limit: int = 20,
+    folder: str | None = None,
+    tag: str | None = None,
+    conn=Depends(get_conn),
+):
+    """Машиночитаемый read-only поиск для локальных агентов."""
+    return reader_mod.MeetingReader(conn).search(
+        _agent_query(q, since, limit, folder, tag)
+    )
+
+
+@app.get("/agent/v1/context")
+def agent_context(
+    q: str | None = None,
+    since: str | None = None,
+    limit: int = 5,
+    folder: str | None = None,
+    tag: str | None = None,
+    include_transcript: bool = False,
+    max_chars: int = Query(default=20_000, gt=0),
+    conn=Depends(get_conn),
+):
+    markdown = reader_mod.MeetingReader(conn).context(
+        _agent_query(q, since, limit, folder, tag),
+        include_transcript=include_transcript,
+        max_chars=max_chars,
+    )
+    return Response(markdown, media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/agent/v1/meetings/{doc_id}")
+def agent_meeting(
+    doc_id: str,
+    include_transcript: bool = False,
+    conn=Depends(get_conn),
+):
+    meeting = reader_mod.MeetingReader(conn).get(
+        doc_id, include_transcript=include_transcript
+    )
+    if meeting is None:
+        raise HTTPException(status_code=404, detail="Встреча не найдена")
+    return meeting
 
 
 def _render_sync(

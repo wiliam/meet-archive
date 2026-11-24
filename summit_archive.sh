@@ -6,16 +6,21 @@ set -euo pipefail
 # которые читает веб-админка (summit-archive-admin).
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_ROOT="${SUMMIT_SOURCE_ROOT:-$REPO_ROOT/summit}"
+ARCHIVE_ROOT="${SUMMIT_ARCHIVE_ROOT:-$REPO_ROOT/summit-archive}"
+MODERN_SOURCE_DB="$HOME/Library/Containers/app.summitnotes/Data/Library/Application Support/Summit/Database/database.sqlite"
 if [[ -n "${SUMMIT_SOURCE_DB:-}" ]]; then
   SOURCE_DB="$SUMMIT_SOURCE_DB"
-elif [[ -f "$SOURCE_ROOT/database.sqlite" ]]; then
-  SOURCE_DB="$SOURCE_ROOT/database.sqlite"
 elif [[ -f "$REPO_ROOT/summit-db/database.sqlite" ]]; then
-  SOURCE_DB="$REPO_ROOT/summit-db/database.sqlite"
+  if [[ -f "$SOURCE_ROOT/database.sqlite" ]]; then
+    SOURCE_DB="$SOURCE_ROOT/database.sqlite"
+  else
+    SOURCE_DB="$REPO_ROOT/summit-db/database.sqlite"
+  fi
+elif [[ -z "${SUMMIT_SOURCE_ROOT:-}${SUMMIT_ARCHIVE_ROOT:-}" && -s "$MODERN_SOURCE_DB" ]]; then
+  SOURCE_DB="$MODERN_SOURCE_DB"
 else
   SOURCE_DB="$SOURCE_ROOT/database.sqlite"
 fi
-ARCHIVE_ROOT="${SUMMIT_ARCHIVE_ROOT:-$REPO_ROOT/summit-archive}"
 SCRIPT_PATH="$REPO_ROOT/archive_summit_meetings.py"
 PUSH_SCRIPT="$REPO_ROOT/push_to_hub.py"
 
@@ -44,8 +49,8 @@ Examples:
 
 Environment:
   SUMMIT_SOURCE_ROOT      папки встреч Summit  (default: <repo>/summit)
-  SUMMIT_SOURCE_DB        живая база Summit     (default: <source-root>/database.sqlite,
-                                                 затем <repo>/summit-db/database.sqlite)
+  SUMMIT_SOURCE_DB        живая база Summit     (default: база внутри summit/ или summit-db/,
+                                                 в старой установке также проверяется контейнер Summit)
   SUMMIT_ARCHIVE_ROOT     папка архива          (default: <repo>/summit-archive)
   MEET_ARCHIVE_HUB_URL    адрес хаба, куда отправлять встречи
   MEET_ARCHIVE_HUB_TOKEN  токен устройства (или push --token-file ПУТЬ)
